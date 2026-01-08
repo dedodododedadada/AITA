@@ -1,0 +1,13 @@
+/aita
+/cmd/api/api    
+*.exe         
+*.test      
+
+vendor/
+
+.vscode/        
+.idea/          
+.DS_Store       
+Thumbs.db       
+go
+go.sum.bak      
