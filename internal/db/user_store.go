@@ -14,12 +14,12 @@ type UserStore interface {
 }
 
 type PostgresUserStore struct {
-	db *sqlx.DB
+	database *sqlx.DB
 }
 
 
-func NewPostgresUserStore(db *sqlx.DB) *PostgresUserStore {
-	return &PostgresUserStore{db: db}
+func NewPostgresUserStore(DB *sqlx.DB) *PostgresUserStore {
+	return &PostgresUserStore{database: DB}
 }
 
 func(s *PostgresUserStore) Create(ctx context.Context, req *models.SignupRequest) (*models.User,error){
@@ -28,8 +28,10 @@ func(s *PostgresUserStore) Create(ctx context.Context, req *models.SignupRequest
 		return nil, err
 	}
 	var user models.User
-	query := `INSERT INTO users(username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, password_hash, created_at`
-	err = s.db.GetContext(ctx, &user, query, req.Username, req.Email, string(hashedPassword))
+	query := `INSERT INTO users(username, email, password_hash) 
+			  VALUES ($1, $2, $3) 
+			  RETURNING id, username, email, password_hash, created_at`
+	err = s.database.GetContext(ctx, &user, query, req.Username, req.Email, string(hashedPassword))
 	if err != nil {
 		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505"{
 			return nil, errors.New("ユーザー名かメールアドレスは登録済みです")
@@ -42,7 +44,7 @@ func(s *PostgresUserStore) Create(ctx context.Context, req *models.SignupRequest
 func(s *PostgresUserStore) GetByEmail(ctx context.Context, email string) (*models.User,error) {
 	var user models.User
 	query := `SELECT id, username, email, password_hash,created_at FROM users WHERE email = $1`
-	err := s.db.GetContext(ctx, &user, query, email)
+	err := s.database.GetContext(ctx, &user, query, email)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, errors.New("ユーザーが存在しません")

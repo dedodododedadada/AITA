@@ -23,3 +23,4 @@ CREATE TABLE "sessions" (
 );
 ALTER TABLE "tweets" ADD FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE;
 ALTER TABLE "sessions" ADD FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE;
+CREATE INDEX "idx_sessions_token_hash" ON "sessions" ("token_hash")

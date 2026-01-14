@@ -2,10 +2,13 @@ package main
 import(
 	"aita/internal/api"
 	"aita/internal/db"
+	"os"
 	"log"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
+	_ "github.com/lib/pq"
+	"github.com/joho/godotenv"
 )
 // 	Configuration（+file
 type Config struct{
@@ -14,8 +17,15 @@ type Config struct{
 }
 
 func loadConfig() *Config{
+	if err := godotenv.Load(); err != nil {
+		log.Println(".envファイルが見つかりません。システム環境変数を使用します")
+	}
+	dbURL := os.Getenv("DB_URL")
+	if dbURL == "" {
+		log.Fatal("エラー：環境変数 DB_URL が設定されていません")
+	}
 	return &Config{
-		DBConnStr:        "postgresql://aita_admin:123456a@localhost:5433/aita_db?sslmode=disable",
+		DBConnStr:       dbURL,
 		ServerAddress:   ":8080",
 	}
 }

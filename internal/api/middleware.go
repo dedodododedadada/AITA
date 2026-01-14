@@ -2,7 +2,6 @@ package api
 
 import(
 	"aita/internal/db"
-	"aita/internal/models"
 	"net/http"
 	"strings"
 	"github.com/gin-gonic/gin"
@@ -17,7 +16,7 @@ func AuthMiddlare(store db.SessionStore) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "認証が必要です。ログインしてください"})
 			return
 		}
-		fields := string.Fields(authHeader)
+		fields := strings.Fields(authHeader)
 		if len(fields) < 2 || strings.ToLower(fields[0]) != "bearer" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "認証形式が正しくありません"})
 			return
@@ -25,7 +24,7 @@ func AuthMiddlare(store db.SessionStore) gin.HandlerFunc {
 		token := fields[1]
 		session, err := store.GetByToken(c.Request.Context(),token)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": error.Error()})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			return
 		}
 		c.Set(AuthPayloadKey, session.UserID)
