@@ -1,7 +1,10 @@
 /aita
 /cmd/api/api    
 *.exe         
-*.test      
+*.test 
+
+
+.env
 
 vendor/
 

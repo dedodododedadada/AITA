@@ -1,27 +1,28 @@
 package db
+
 import(
+	"aita/internal/models"
 	"context"
-	"encoding/base64"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"aita/internal/models"
-	"errors"
+	"encoding/base64"
 	"time"
+
 	"github.com/jmoiron/sqlx"
 )
 
-type Sessionstore interface {
-	Create(ctx context.Context, userID int64, duration time.Duration) (string, *Session, error)
-	GetByToken(ctx context.Context, token string)(*Session, error)
+type SessionStore interface {
+	Create(ctx context.Context, userID int64, duration time.Duration) (string, *models.Session, error)
+	GetByToken(ctx context.Context, token string)(*models.Session, error)
 }
 
 type PostgresSessionStore struct {
-	db *sqlx.DB
+	database *sqlx.DB
 }
 
-func NewPostgresSessionStore(db *sqlx.DB) *PostgresSessionStore {
-	return &PostgresSessionStore{db:db}
+func NewPostgresSessionStore(DB *sqlx.DB) *PostgresSessionStore {
+	return &PostgresSessionStore{database:DB}
 }
 
 func generateRandomToken(length int) (string, error) {
@@ -37,37 +38,40 @@ func hashToken(token string) string {
 	return base64.URLEncoding.EncodeToString(hash[:])
 }
 
-func (s *PostgresSessionStore) Create(ctx context.Context, userID int64, duration time.Duration) (string, *Session, error){
+func (s *PostgresSessionStore) Create(ctx context.Context, userID int64, duration time.Duration) (string, *models.Session, error){
 	rawToken, err := generateRandomToken(32)
 	if err != nil {
 		return "", nil, err
 	}
 	tokenHash := hashToken(rawToken)
 	expiresAt := time.Now().Add(duration)
-	var session Session
-	query := `INSERT INTO SESSIONS (user_id, token_hash, expires_at) 
+	var session models.Session
+	query := `INSERT INTO sessions(user_id, token_hash, expires_at) 
 			  VALUES ($1, $2, $3)
 			  RETURNING id, user_id, token_hash, expires_at`
-	err = s.db.GetContext(ctx, &session, query, userID, tokenHash, expiresAt)
+	err = s.database.GetContext(ctx, &session, query, userID, tokenHash, expiresAt)
 	if err != nil {
 		return"", nil, err
 	}
 	return rawToken, &session, nil
 }
 
-func (s *PostgresSessionStore) GetByToken(ctx context.Context, token string) (*Session, error) {
+func (s *PostgresSessionStore) GetByToken(ctx context.Context, token string) (*models.Session, error) {
 	tokenHash := hashToken(token)
-	var session Session
+	var session models.Session
 	query := `SELECT id, user_id,token_hash, expires_at
 			  FROM sessions 
-			  WHERE token_hash = $1 AND expires_at > NOW()`
-	err := s.db.GetContext(ctx, &session, query, tokenHash)
+			  WHERE token_hash = $1`
+	err := s.database.GetContext(ctx, &session, query, tokenHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, errors.New("セッションの期限が切れているか、無効です")
+			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	//if session.IsExpired() {
+		//return nil, errors.New("セッションの期限が切れているので、無効です")
+	//}
 	return &session, nil
 }
 

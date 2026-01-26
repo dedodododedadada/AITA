@@ -1,0 +1,1 @@
+CREATE DATABASE aita_test_db;

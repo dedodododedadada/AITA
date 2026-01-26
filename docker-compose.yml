@@ -1,17 +1,17 @@
 version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
     container_name: aita_postgres_v2  
     environment:
-      POSTGRES_USER: 'aita_admin'
-      POSTGRES_PASSWORD: 'password' 
-      POSTGRES_DB: 'aita_db'
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5439:5432" 
+      - "${DB_PORT}:5432" 
     volumes:
       - postgres_data_v2:/var/lib/postgresql/data
+      - ./scripts/init-db:/docker-entrypoint-initdb.d
 
 volumes:
   postgres_data_v2:

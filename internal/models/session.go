@@ -1,4 +1,5 @@
 package models
+
 import(
 	"time"
 )
@@ -10,7 +11,7 @@ type Session struct{
 	ExpiresAt     time.Time    `db:"expires_at"`
 }
 
-func(s *Session) isExpired() bool {
+func(s *Session) IsExpired() bool {
 	if s == nil {
 		return true
 	}
