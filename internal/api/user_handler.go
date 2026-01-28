@@ -48,7 +48,11 @@ func (h *UserHandler) SignUp(c *gin.Context) {
 		if err.Error() == "ユーザー名かメールアドレスは登録済みです" {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()}) 
 		} else {
-		    c.JSON(http.StatusInternalServerError, gin.H{"error": "ユーザーの作成に失敗しました"}) 
+		//    c.JSON(http.StatusInternalServerError, gin.H{"error": "ユーザーの作成に失敗しました"}) 
+			c.JSON(http.StatusInternalServerError, gin.H{
+        		"error": "ユーザーの作成に失敗しました",
+        		"details": err.Error(), 
+    		})
 		}
 		return
 	}

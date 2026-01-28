@@ -1,8 +1,8 @@
 package api
 
 import (
-	"aita/internal/db"
 	"aita/internal/contextkeys"
+	"aita/internal/db"
 
 	"net/http"
 	"strings"

@@ -1,16 +1,17 @@
 package testutils
 
 import (
+	"aita/internal/config"
 	"log"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jmoiron/sqlx"
-	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"                                        
-    _ "github.com/golang-migrate/migrate/v4/database/postgres"   
-    _ "github.com/golang-migrate/migrate/v4/source/file"
+	_ "github.com/lib/pq"
 )
 
 type TestContext struct {
@@ -23,17 +24,18 @@ func  (ctx *TestContext) CleanupTestDB() {
 		log.Fatalf("テストデータベースに接続できません: %v", err)
 	}
 }
-func RunTestMain(m *testing.M, envPath string) (*TestContext, func()) {
+func RunTestMain(m *testing.M) (*TestContext, func()) {
 	os.Setenv("APP_ENV", "test")
-	_ = godotenv.Load(envPath)
-	testDBConnStr := os.Getenv("DB_TEST_URL")
-	db, err := sqlx.Connect("postgres", testDBConnStr)
-	if(err != nil) {
-		log.Fatalf("テストデータベースに接続できません (%.50s...): %v", testDBConnStr, err)
+	cfg := config.LoadConfig()
+	db, err := sqlx.Connect("postgres", cfg.DBConnStr)
+	if err != nil {
+		log.Fatalf("テストデータベースに接続できません (%.50s...): %v", cfg.DBConnStr, err)
 	}
+	migrationDir := config.GetPath("migrations")
+	migrationURL := "file://" + filepath.ToSlash(migrationDir)
 	mig, err := migrate.New(
-        "file://../../migrations", 
-        testDBConnStr,
+        migrationURL, 
+        cfg.DBConnStr,
     )
 	if err != nil {
         log.Fatalf("マイグレーションインスタンスの生成に失敗しました: %v", err)

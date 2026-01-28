@@ -18,10 +18,14 @@ func main() {
 	}
 	defer database.Close()
 	log.Printf("データベースへの接続に成功しました")
+
 	userStore := db.NewPostgresUserStore(database)
 	sessionStore := db.NewPostgresSessionStore(database)
 	userHandler := api.NewUserHandler(userStore, sessionStore)
+
 	router := api.SetupRouter(userHandler, sessionStore)
+
+	//srv := &http.Server{}
 	log.Printf("サーバーが起動し、ポート%sで待機中です",config.ServerAddress)
 	if err :=router.Run(config.ServerAddress); err != nil{
 		log.Fatal("サーバーの起動に失敗しました",err)

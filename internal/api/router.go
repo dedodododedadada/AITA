@@ -7,7 +7,7 @@ import(
 
 func SetupRouter(userHandler *UserHandler, sessionStore db.SessionStore) *gin.Engine {
 	router := gin.Default()
-	v1 := router.Group("api/v1")
+	v1 := router.Group("/api/v1")
 	{
 		v1.POST("/signup", userHandler.SignUp)
 		v1.POST("/login", userHandler.Login)
