@@ -76,5 +76,5 @@ func (s *PostgresSessionStore) GetByToken(ctx context.Context, token string) (*m
 }
 
 
-
+// will be decouplied （疎結合）
 

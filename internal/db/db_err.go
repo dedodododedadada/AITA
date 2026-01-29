@@ -7,3 +7,4 @@ var (
 	ErrNotFound = errors.New("データが存在しません")
 	ErrExpired = errors.New("期限が切れているので、無効です")
 )
+// will be removed in service layer

@@ -3,6 +3,7 @@ package tests
 import (
 	"aita/internal/api"
 	"aita/internal/models"
+	"aita/internal/service"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -17,9 +18,11 @@ import (
 
 func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
+	tweetService := service.NewTweetService(testTweetStore)
+	tweetHandler := api.NewTweetHandler(tweetService)
 	userHandler := api.NewUserHandler(testUserStore, testSessionStore)
 	gin.SetMode(gin.TestMode)
-	r := api.SetupRouter(userHandler, testSessionStore)
+	r := api.SetupRouter(userHandler, tweetHandler,testSessionStore)
 	signupPayload := models.SignupRequest{
 		Username: "frontend_dev",
 		Email: "dev@aita.com",

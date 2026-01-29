@@ -1,12 +1,14 @@
 package main
-import(
+
+import (
 	"aita/internal/api"
-	"aita/internal/db"
 	"aita/internal/config"
+	"aita/internal/db"
+	"aita/internal/service"
 	"log"
 
 	"github.com/jmoiron/sqlx"
-	_"github.com/lib/pq"
+	_ "github.com/lib/pq"
 )
 
 
@@ -21,9 +23,12 @@ func main() {
 
 	userStore := db.NewPostgresUserStore(database)
 	sessionStore := db.NewPostgresSessionStore(database)
+	tweetStore := db.NewPostgresTweetStore(database)
+	tweetService := service.NewTweetService(tweetStore)
 	userHandler := api.NewUserHandler(userStore, sessionStore)
+	tweetHandler := api.NewTweetHandler(tweetService)
 
-	router := api.SetupRouter(userHandler, sessionStore)
+	router := api.SetupRouter(userHandler, tweetHandler, sessionStore)
 
 	//srv := &http.Server{}
 	log.Printf("サーバーが起動し、ポート%sで待機中です",config.ServerAddress)

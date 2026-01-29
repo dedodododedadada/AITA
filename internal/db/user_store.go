@@ -56,7 +56,7 @@ func(s *PostgresUserStore) GetByEmail(ctx context.Context, email string) (*model
 	return &user, nil
 }
 
-func(s *PostgresUserStore) GetByID(ctx context.Context, id int64) (*models.User, error) {
+func(s *PostgresUserStore)GetByID(ctx context.Context, id int64) (*models.User, error) {
 	var user models.User
 	query := `SELECT id, username, email, password_hash,created_at FROM users WHERE id = $1`
 	err := s.database.GetContext(ctx, &user, query, id)
@@ -68,3 +68,6 @@ func(s *PostgresUserStore) GetByID(ctx context.Context, id int64) (*models.User,
     }
 	return &user, nil
 }
+
+
+// will be decouplied （疎結合）

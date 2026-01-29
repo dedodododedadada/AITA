@@ -5,7 +5,7 @@ import(
 	"aita/internal/db"
 )
 
-func SetupRouter(userHandler *UserHandler, sessionStore db.SessionStore) *gin.Engine {
+func SetupRouter(userHandler *UserHandler, tweetHandler *TweetHandler, sessionStore db.SessionStore) *gin.Engine {
 	router := gin.Default()
 	v1 := router.Group("/api/v1")
 	{
@@ -15,6 +15,10 @@ func SetupRouter(userHandler *UserHandler, sessionStore db.SessionStore) *gin.En
 		protected.Use(AuthMiddleware(sessionStore))
 		{
 			protected.GET("/me", userHandler.GetMe)
+			tweets := protected.Group("/tweets")
+			{
+				tweets.POST("", tweetHandler.Create)
+			}
 		} 
 	}
 	return router
