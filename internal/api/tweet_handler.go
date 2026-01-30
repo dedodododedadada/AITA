@@ -26,7 +26,7 @@ func (h *TweetHandler) Create(c *gin.Context) {
 	}
 	userID := uidRow.(int64)
 
-	var req models.CreateTweetRequest
+	var req *models.CreateTweetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "リクエスト形式が正しくありません"})
 		return

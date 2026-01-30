@@ -15,7 +15,7 @@ func NewTweetService(ts  db.TweetStore) *TweetService {
 	return &TweetService{tweetStore: ts}
 }
 
-func(s *TweetService) PostTweet(ctx context.Context, userID int64, req models.CreateTweetRequest) (*models.Tweet, error) {
+func(s *TweetService) PostTweet(ctx context.Context, userID int64, req *models.CreateTweetRequest) (*models.Tweet, error) {
 	
 	if req.Content == "" {
 		return nil, models.ErrContentEmpty
@@ -28,7 +28,7 @@ func(s *TweetService) PostTweet(ctx context.Context, userID int64, req models.Cr
 	}
 
 	if err := s.tweetStore.CreateTweet(ctx, tweet); err != nil {
-		return nil, fmt.Errorf("failed to create tweet: %w", err)
+		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
 	}
 
 	return tweet, nil
