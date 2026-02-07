@@ -2,59 +2,287 @@ package db
 
 import (
 	"aita/internal/models"
+	"aita/internal/pkg/testutils"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateToken(t *testing.T) {
+func TestCreateSession(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
-	userReq := &models.SignupRequest{
-		Username: "token_test_user",
-		Email:    "token_test@example.com",
-		Password: "password456",
+
+	initUser := &models.User{
+		Username:     "token_test_user",
+		Email:        "token_test@example.com",
+		PasswordHash: "hashed_password",
 	}
-	user, err := testUserStore.Create(ctx, userReq)
+	createdUser, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
-	duration := 24 *time.Hour
-	createdToken, createdSession, err := testSessionStore.Create(ctx, user.ID, duration)
-	require.NoError(t, err, "CreatedTokenはエラーを返すべきではありません")
-	require.NotEmpty(t, createdToken, "作成されたトークンは空であるべきではありません")
-	require.NotNil(t, createdSession, "作成されたセッションは空であるべきではありません")
-	require.Equal(t, user.ID, createdSession.UserID, "ユーザーIDは一致する必要があります")
-	require.NotEmpty(t, createdSession.TokenHash, "TokenHashは空であるべきではありません")
-	require.WithinDuration(t, time.Now().Add(duration), createdSession.ExpiresAt, 2*time.Second,
-						  "期待される有効期限が、現在の時刻+durationから2秒以内であることを検証")
+
+	t.Run("正常にセッションできること", func(t *testing.T) {
+		mockHash := "mock_hash_value_123"
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		sessionToCreate := &models.Session{
+			UserID:    createdUser.ID,
+			TokenHash: mockHash,
+			ExpiresAt: expiresAt,
+		}
+		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
+	
+		require.NoError(t, err, "Sessionの作成に失敗してはいけません")
+		require.NotNil(t, createdSession)
+		assert.Equal(t, createdUser.ID, createdSession.UserID)
+		assert.Equal(t, mockHash, createdSession.TokenHash)
+		assert.WithinDuration(t, expiresAt, createdSession.ExpiresAt, time.Second)
+		assert.NotZero(t, createdSession.CreatedAt)
+	})
+	
 }
 
-func TestGetByToken(t *testing.T) {
+func TestCreateSessionWhileErr(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
-	userReq := &models.SignupRequest{
-		Username: "test_get_token",
-		Email:    "get_token@example.com",
-		Password: "password789" , 
+
+	initUser := &models.User{
+		Username:     "token_test_user",
+		Email:        "token_test@example.com",
+		PasswordHash: "hashed_password",
 	}
-	user, err := testUserStore.Create(ctx, userReq)
+	createdUser, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
-	duration := 1 * time.Hour
-	rawToken, createdSession, _ := testSessionStore.Create(ctx, user.ID, duration)
-	t.Run("有効なトークンで取得", func(t *testing.T) {
-		foundSession, err := testSessionStore.GetByToken(ctx, rawToken)
-		require.NoError(t, err, "トークンが有効な場合は、エラーを返すべきではありません")
-		require.NotNil(t, foundSession, "見つかったセッションは空であってはなりません")
-		require.Equal(t, createdSession.ID, foundSession.ID, "見つかったセッションIDが一致するはずです")
-		require.Equal(t, user.ID, foundSession.UserID, "見つかったユーザーIDが一致するはずです")
+
+	t.Run("23503: ユーザーがない", func(t *testing.T) {
+		mockHash := "mock_hash_value_123"
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		sessionToCreate := &models.Session{
+			UserID:    int64(999999),
+			TokenHash: mockHash,
+			ExpiresAt: expiresAt,
+		}
+		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
+	
+		assert.ErrorIs(t, err, models.ErrUserNotFound)
+		assert.Nil(t, createdSession)
 	})
-	t.Run("トークン", func(t *testing.T){
-		invalidSession, err := testSessionStore.GetByToken(ctx, "non-existent-token")
-		require.Error(t, err, "トークンがない場合、エラーを返すべきです")
-		require.Nil(t, invalidSession, "トークンがない場合、セッションオブジェクトは空であるべきです")
-		require.ErrorIs(t, err, ErrNotFound, "エラーはErrNotFound であるべきです")
+
+	t.Run("23505: トークンハッシュの重複 (Unique Violation)", func(t *testing.T) {
+    	mockHash := "duplicate_hash"
+   		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+    	initSession := &models.Session{
+			UserID: createdUser.ID, 
+			TokenHash: mockHash, 
+			ExpiresAt: expiresAt,
+		}
+    	_, err := testSessionStore.Create(ctx, initSession)
+    	require.NoError(t, err)
+
+    	newSession := &models.Session{
+			UserID: createdUser.ID, 
+			TokenHash: mockHash, 
+			ExpiresAt: expiresAt,
+		}
+    	createdSession, err := testSessionStore.Create(ctx, newSession)
+
+    	assert.ErrorIs(t, err, models.ErrTokenConflict)
+		assert.Nil(t, createdSession)
+	})
+
+	t.Run("22001: tokenhash列長超過", func(t *testing.T) {
+		mockHash := strings.Repeat("a", 256)
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		sessionToCreate := &models.Session{
+			UserID:    createdUser.ID,
+			TokenHash: mockHash,
+			ExpiresAt: expiresAt,
+		}
+		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
+	
+		assert.ErrorIs(t, err, models.ErrValueTooLong)
+		assert.Nil(t, createdSession)
+	})
+
+	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+
+		tempSessionStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		mockHash := "mock_hash_value_123"
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		sessionToCreate := &models.Session{
+			UserID:    createdUser.ID,
+			TokenHash: mockHash,
+			ExpiresAt: expiresAt,
+		}
+		createdUser, err := tempSessionStore.Create(ctx, sessionToCreate)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "セッションの生成に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, createdUser)
+	})
+}
+
+func TestGetByHash(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	newUser := &models.User{
+		Username:     "test_get_token",
+		Email:        "get_token@example.com",
+		PasswordHash: "hash",
+	}
+	createdUser, err := testUserStore.Create(ctx, newUser)
+	require.NoError(t, err)
+
+	targetHash := "target_secret_hash"
+	initSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: targetHash,
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	createdSession, _ := testSessionStore.Create(ctx, initSession)
+	require.NoError(t, err)
+
+	t.Run("存在するHashで取得", func(t *testing.T) {
+		foundSession, err := testSessionStore.GetByHash(ctx, targetHash)
+
+		require.NoError(t, err)
+		require.NotNil(t, foundSession)
+		assert.Equal(t, createdSession.ID, foundSession.ID)
+		assert.Equal(t, createdSession.TokenHash, foundSession.TokenHash)
+		assert.Equal(t, createdSession.UserID, foundSession.UserID)
+		assert.Equal(t, createdSession.ExpiresAt, foundSession.ExpiresAt)
+		assert.Equal(t, createdSession.CreatedAt, foundSession.CreatedAt)
+	})
+}
+
+func TestGetByHashWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	newUser := &models.User{
+		Username:     "test_get_token",
+		Email:        "get_token@example.com",
+		PasswordHash: "hash",
+	}
+	createdUser, err := testUserStore.Create(ctx, newUser)
+	require.NoError(t, err)
+
+	targetHash := "target_secret_hash"
+	initSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: targetHash,
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	_, err = testSessionStore.Create(ctx, initSession)
+	require.NoError(t, err)
+
+	t.Run("tokenhashが存在しない", func(t *testing.T) {
+		wrongHash := "wrong_test_toke "
+		foundSession, err := testSessionStore.GetByHash(ctx, wrongHash)
+
+		assert.ErrorIs(t, err, models.ErrSessionNotFound)
+		assert.Nil(t, foundSession)
+	})
+	
+	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+		
+		tempSessionStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		unfoundSession, err := tempSessionStore.GetByHash(ctx, targetHash)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "セッション取得に失敗")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, unfoundSession)
+	})
+}
+
+func TestUpdateExpiredAt(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username:     "update_test_user",
+		Email:        "update_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initialSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: "initial_hash",
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	createdSession, err := testSessionStore.Create(ctx, initialSession)
+	require.NoError(t, err)
+
+	t.Run("正常に有効期限を更新できること", func(t *testing.T) {
+		newExpiry := time.Now().Add(48 * time.Hour).UTC()
+
+		err := testSessionStore.UpdateExpiresAt(ctx, newExpiry, createdSession.ID)
+
+		assert.NoError(t, err)
+
+		updatedSession, err := testSessionStore.GetByHash(ctx, "initial_hash")
+		require.NoError(t, err)
+		assert.WithinDuration(t, newExpiry, updatedSession.ExpiresAt, time.Second)
+	})
+
+	t.Run("存在しないIDを指定した場合、ErrSessionNotFoundを返すこと", func(t *testing.T) {
+		nonExistentID := int64(999999)
+		newExpiry := time.Now().Add(24 * time.Hour).UTC()
+
+		err := testSessionStore.UpdateExpiresAt(ctx, newExpiry, nonExistentID)
+		assert.ErrorIs(t, err, models.ErrSessionNotFound)
+	})
+
+}
+
+func TestUpdateExpiredAtWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username:     "update_test_user",
+		Email:        "update_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initialSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: "initial_hash",
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	createdSession, err := testSessionStore.Create(ctx, initialSession)
+	require.NoError(t, err)
+
+	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, _ := testutils.OpenDB(testContext.DSN)
+		tempStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		err := tempStore.UpdateExpiresAt(ctx, time.Now(), createdSession.ID)
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "セッション期限の更新に失敗しました")
+		t.Logf("期待通りキャッチされたエラー: %v", err)
 	})
 }

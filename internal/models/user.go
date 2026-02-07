@@ -1,6 +1,6 @@
 package models
 
-import(
+import (
 	"time"
 )
 
@@ -43,3 +43,5 @@ func NewUserResponse(user *User) UserResponse {
 		CreatedAt: user.CreatedAt,
 	}
 }
+
+

@@ -59,7 +59,7 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 │   ├── pkg/testutils  #　ユニットテストの補助関数（ヘルパー）
 │   └── init-db        #  テートデータベース作成
 ├── scripts
-    └── init-db        #  DB環境構築用スクリプト（Docker起動など）
+│   └── init-db        #  DB環境構築用スクリプト（Docker起動など）
 ├── migrations/        #　SQLマイグレーションファイル
 └── tests/             #　結合テスト (＊作成中＊)
 

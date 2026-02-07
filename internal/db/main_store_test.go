@@ -9,10 +9,10 @@ import (
 
 
 var (
-	testUserStore		UserStore
-	testSessionStore    SessionStore
-	testTweetStore      TweetStore
-	testContext         *testutils.TestContext 
+    testUserStore    *postgresUserStore
+    testSessionStore *postgresSessionStore
+    testTweetStore   *postgresTweetStore
+    testContext      *testutils.TestContext 
 )
 
 func TestMain(m *testing.M) {
@@ -27,5 +27,6 @@ func TestMain(m *testing.M) {
 	teardown()
 	os.Exit(exitCode)
 }
+
 
 

@@ -4,8 +4,9 @@ import (
 	"aita/internal/models"
 	"aita/internal/pkg/utils"
 	"context"
-	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/mock"
@@ -14,11 +15,12 @@ import (
 
 func TestPostTweet(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	imageURL := utils.StringPtr("https://example.com/mock.jpg")
 	tests := []struct{
 		name			string
 		userID          int64
 		inputBody       *models.CreateTweetRequest
-		setupMock       func(mt *MockTweetStore)
+		setupMock       func(mt *mockTweetStore)
 		wantedErr       error
 	}{
 		{
@@ -26,14 +28,30 @@ func TestPostTweet(t *testing.T) {
 			userID: 101,
 			inputBody: &models.CreateTweetRequest{
 				Content: "Hello world",
-				ImageURL: utils.StringPtr("https://example.com/mock.jpg"),
+				ImageURL: imageURL,
 			},
-			setupMock: func(mt *MockTweetStore) {
+			setupMock: func(mt *mockTweetStore) {
+				expectedTweet := &models.Tweet{
+					ID: 1,
+					UserID: 101,
+					Content:"Hello world",
+					ImageURL: imageURL,
+					CreatedAt: time.Now().UTC(),
+				}
 				mt.On("CreateTweet", mock.Anything, mock.MatchedBy(func(t *models.Tweet) bool {
 					return t.UserID == 101 && t.Content == "Hello world"
-				})).Return(nil)
+				})).Return(expectedTweet, nil)
 			},
 			wantedErr: nil,
+		},
+		{
+			name: "パラメーターエラー、無効なユーザーID",
+			userID: -1,
+			inputBody:&models.CreateTweetRequest{
+				Content: "Hello world",
+			},
+			setupMock: func(mt *mockTweetStore){},
+			wantedErr: models.ErrInvalidUserID,
 		},
 		{
 			name: "パラメーターエラー、コンテントは空である",
@@ -41,8 +59,17 @@ func TestPostTweet(t *testing.T) {
 			inputBody:&models.CreateTweetRequest{
 				Content: "",
 			},
-			setupMock: func(mt *MockTweetStore){},
-			wantedErr: models.ErrContentEmpty,
+			setupMock: func(mt *mockTweetStore){},
+			wantedErr: models.ErrRequiredFieldMissing,
+		},
+		{
+			name: "パラメーターエラー、無効なコンテント",
+			userID: 101,
+			inputBody:&models.CreateTweetRequest{
+				Content: strings.Repeat("a", 1001),
+			},
+			setupMock: func(mt *mockTweetStore){},
+			wantedErr: models.ErrInvalidContentFormat,
 		},
 		{
 			name: "データベースエラー,ユーザーが存在しない場合",
@@ -51,24 +78,24 @@ func TestPostTweet(t *testing.T) {
 				Content: "Hello world",
 				ImageURL: utils.StringPtr("https://example.com/mock.jpg"),
 			},
-			setupMock: func(mt *MockTweetStore) {
+			setupMock: func(mt *mockTweetStore) {
 				mt.On("CreateTweet", mock.Anything, mock.MatchedBy(func(t *models.Tweet) bool {
 					if t.UserID != 99999 || t.Content != "Hello world" {
 						return false
 					}	
-					if t.ImageURL == nil || *t.ImageURL != "https://example.com/mock.jpg" {
+					if t.ImageURL == nil || *t.ImageURL != *imageURL {
 						return false
 					}
 					return true
-				})).Return(fmt.Errorf("ツイートの挿入に失敗しました: %w", models.ErrUserNotFound))
+				})).Return(nil, errMockInternal)
 			},
-			wantedErr: models.ErrUserNotFound,
+			wantedErr: errMockInternal,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mt := new(MockTweetStore)
+			mt := new(mockTweetStore)
 			tt.setupMock(mt)
 			svc := NewTweetService(mt)
 			ctx := context.Background()

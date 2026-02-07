@@ -13,7 +13,7 @@ type Tweet struct{
 }
 
 type CreateTweetRequest struct {
-	Content		 string        `json:"content" binding:"required,max=280"`
+	Content		 string        `json:"content" binding:"max=1000"`
 	ImageURL    *string        `json:"image_url" binding:"omitempty,url"`
 }
 
@@ -34,4 +34,7 @@ func NewTweetResponse(tweet *Tweet) TweetResponse {
 		CreatedAt:  tweet.CreatedAt,
 	}
 }
+
+
+
 

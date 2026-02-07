@@ -4,70 +4,90 @@ import (
 	"aita/internal/models"
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
-	"golang.org/x/crypto/bcrypt"
 )
-type UserStore interface {
-	Create(ctx context.Context, req *models.SignupRequest)(*models.User, error)
-	GetByEmail(ctx context.Context, email string)(*models.User, error)
-	GetByID(ctx context.Context, id int64)(*models.User, error)
-}
 
-type PostgresUserStore struct {
+type postgresUserStore struct {
 	database *sqlx.DB
 }
 
-
-func NewPostgresUserStore(DB *sqlx.DB) *PostgresUserStore {
-	return &PostgresUserStore{database: DB}
+func NewPostgresUserStore(DB *sqlx.DB) *postgresUserStore {
+	return &postgresUserStore{database: DB}
 }
 
-func(s *PostgresUserStore) Create(ctx context.Context, req *models.SignupRequest) (*models.User,error)  {
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password),bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
-	}
-	var user models.User
+func (s *postgresUserStore) Create(ctx context.Context, user *models.User) (*models.User, error) {
 	query := `INSERT INTO users(username, email, password_hash) 
 			  VALUES ($1, $2, $3) 
 			  RETURNING id, username, email, password_hash, created_at`
-	err = s.database.GetContext(ctx, &user, query, req.Username, req.Email, string(hashedPassword))
+
+	var newUser models.User
+	err := s.database.QueryRowContext(
+		ctx,
+		query,
+		user.Username,
+		user.Email,
+		user.PasswordHash,
+	).Scan(
+		&newUser.ID,
+		&newUser.Username,
+		&newUser.Email,
+		&newUser.PasswordHash,
+		&newUser.CreatedAt,
+	)
+
 	if err != nil {
-		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505"{
-			return nil, ErrConflict
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			switch pqErr.Code {
+			case errCodeUniqueViolation:
+				switch pqErr.Constraint {
+				case constraintUsernameK:
+					return nil, models.ErrUsernameConflict
+				case constraintUseremailK:
+					return nil, models.ErrEmailConflict
+				}
+			case errCodeStringDataRightTruncation:
+				return nil, models.ErrValueTooLong
+			}
 		}
-		return nil, err
+		return nil, fmt.Errorf("ユーザーの生成に失敗しました: %w", err)
 	}
-	return &user,nil
+
+	newUser.CreatedAt = newUser.CreatedAt.UTC()
+	return &newUser, nil
 }
 
-func(s *PostgresUserStore) GetByEmail(ctx context.Context, email string) (*models.User, error) {
-	var user models.User
-	query := `SELECT id, username, email, password_hash,created_at FROM users WHERE email = $1`
-	err := s.database.GetContext(ctx, &user, query, email)
+func (s *postgresUserStore) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	var newUser models.User
+	query := `SELECT id, username, email, password_hash, created_at FROM users WHERE email = $1`
+	err := s.database.GetContext(ctx, &newUser, query, email)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, ErrNotFound
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, models.ErrUserNotFound
 		}
-		return nil, err
+		return nil, fmt.Errorf("emailによるユーザー取得に失敗しました: %w", err)
 	}
-	return &user, nil
+
+	newUser.CreatedAt = newUser.CreatedAt.UTC()
+	return &newUser, nil
 }
 
-func(s *PostgresUserStore)GetByID(ctx context.Context, id int64) (*models.User, error) {
-	var user models.User
+func (s *postgresUserStore) GetByID(ctx context.Context, id int64) (*models.User, error) {
+	var newUser models.User
 	query := `SELECT id, username, email, password_hash,created_at FROM users WHERE id = $1`
-	err := s.database.GetContext(ctx, &user, query, id)
+	err := s.database.GetContext(ctx, &newUser, query, id)
 	if err != nil {
-        if err == sql.ErrNoRows {
-            return nil, ErrNotFound
-        }
-        return nil, err
-    }
-	return &user, nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, models.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("userIDによるユーザー取得に失敗しました: %w", err)
+	}
+
+	newUser.CreatedAt = newUser.CreatedAt.UTC()
+	return &newUser, nil
 }
 
-
-// will be decouplied （疎結合）

@@ -18,11 +18,15 @@ import (
 
 func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
+	userService  := service.NewUserService(testUserStore, testHasher)
+	sessionService := service.NewSessionService(testSessionStore, userService, testTokemanager)
 	tweetService := service.NewTweetService(testTweetStore)
+	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
-	userHandler := api.NewUserHandler(testUserStore, testSessionStore)
+
+
 	gin.SetMode(gin.TestMode)
-	r := api.SetupRouter(userHandler, tweetHandler,testSessionStore)
+	r := api.SetupRouter(userHandler, tweetHandler,sessionService)
 	signupPayload := models.SignupRequest{
 		Username: "frontend_dev",
 		Email: "dev@aita.com",
@@ -47,15 +51,18 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var loginResp struct {
-		Token string `json:"session_token"`
+    	Data struct {
+       		Token string `json:"session_token"`
+    	} `json:"data"`
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &loginResp)
 	require.NoError(t, err)
-	require.NotEmpty(t, loginResp.Token)
+	token := loginResp.Data.Token
+	require.NotEmpty(t, token)
 
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest(http.MethodGet, "/api/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer " + loginResp.Token)
+	req.Header.Set("Authorization", "Bearer " + token)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	fmt.Println("Body:", w.Body.String())

@@ -16,8 +16,19 @@ import (
 
 type TestContext struct {
 	TestDB *sqlx.DB
+	DSN string
 }
 
+func OpenDB(dsn string) (*sqlx.DB, error) {
+	db, err := sqlx.Open("postgres", dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+	return db, err
+}
 func  (ctx *TestContext) CleanupTestDB() {
 	_, err := ctx.TestDB.Exec(`TRUNCATE TABLE sessions, tweets, users RESTART IDENTITY CASCADE;`)
 	if err != nil {
@@ -50,6 +61,9 @@ func RunTestMain(m *testing.M) (*TestContext, func()) {
 		}
 		db.Close()
 	}
-	return &TestContext{TestDB: db}, teardown
+	return &TestContext{
+		TestDB: db,
+		DSN:    cfg.DBConnStr,
+	}, teardown
 }
 

@@ -1,0 +1,1 @@
+ALTER TABLE "tweets" ALTER COLUMN "content" TYPE varchar(1000);

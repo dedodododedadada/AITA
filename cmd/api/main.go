@@ -4,11 +4,13 @@ import (
 	"aita/internal/api"
 	"aita/internal/config"
 	"aita/internal/db"
+	"aita/internal/pkg/crypto"
 	"aita/internal/service"
 	"log"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 
@@ -20,15 +22,19 @@ func main() {
 	}
 	defer database.Close()
 	log.Printf("データベースへの接続に成功しました")
-
+	
+	hasher := crypto.NewBcryptHasher(bcrypt.DefaultCost)
+	tokenmanager := crypto.NewTokenManager()
 	userStore := db.NewPostgresUserStore(database)
 	sessionStore := db.NewPostgresSessionStore(database)
 	tweetStore := db.NewPostgresTweetStore(database)
+	userService := service.NewUserService(userStore, hasher)
+	sessionService := service.NewSessionService(sessionStore, userService, tokenmanager)
 	tweetService := service.NewTweetService(tweetStore)
-	userHandler := api.NewUserHandler(userStore, sessionStore)
+	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
 
-	router := api.SetupRouter(userHandler, tweetHandler, sessionStore)
+	router := api.SetupRouter(userHandler, tweetHandler, sessionService)
 
 	//srv := &http.Server{}
 	log.Printf("サーバーが起動し、ポート%sで待機中です",config.ServerAddress)

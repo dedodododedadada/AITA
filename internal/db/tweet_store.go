@@ -10,40 +10,49 @@ import (
 	"github.com/lib/pq"
 )
 
-type TweetStore interface {
-	CreateTweet(ctx context.Context, tweet *models.Tweet) (error)
-}
-
-type PostgresTweetStore struct {
+type postgresTweetStore struct {
 	database *sqlx.DB
 }
 
-func NewPostgresTweetStore(DB *sqlx.DB) *PostgresTweetStore {
-	return &PostgresTweetStore{database: DB}
+func NewPostgresTweetStore(DB *sqlx.DB) *postgresTweetStore {
+	return &postgresTweetStore{database: DB}
 }
 
-func (s *PostgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Tweet) error {
+func (s *postgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Tweet) (*models.Tweet, error) {
 	query := `
 		INSERT INTO tweets(user_id, content, image_url)
 		VALUES($1, $2, $3)
-		RETURNING id, created_at`
+		RETURNING id, user_id, content, image_url, created_at`
+	var newTweet models.Tweet
 	err := s.database.QueryRowContext(
 		ctx,
 		query,
 		tweet.UserID,
 		tweet.Content,
 		tweet.ImageURL,
-	).Scan(&tweet.ID, &tweet.CreatedAt)
+	).Scan(
+		&newTweet.ID, 
+		&newTweet.UserID,
+		&newTweet.Content,
+		&newTweet.ImageURL,
+		&newTweet.CreatedAt,
+	)
+	
 	if err != nil {
 		var pqErr *pq.Error
-		if errors.As(err, &pqErr){
+		if errors.As(err, &pqErr) {
 			if pqErr.Code == errCodeForeignKeyViolation && pqErr.Constraint == constraintTweetUserFK {
-                return models.ErrUserNotFound
+                return nil, models.ErrUserNotFound
             }
+			if pqErr.Code == errCodeStringDataRightTruncation {
+				return nil, models.ErrValueTooLong
+			}
 		}
 		
-		return fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
+		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
 	}
-	return nil
+
+	newTweet.CreatedAt = newTweet.CreatedAt.UTC()
+	return &newTweet, nil
 }
 

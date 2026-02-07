@@ -1,80 +1,99 @@
 package db
 
-import(
+import (
 	"aita/internal/models"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
-type SessionStore interface {
-	Create(ctx context.Context, userID int64, duration time.Duration) (string, *models.Session, error)
-	GetByToken(ctx context.Context, token string)(*models.Session, error)
-}
-
-type PostgresSessionStore struct {
+type postgresSessionStore struct {
 	database *sqlx.DB
 }
 
-func NewPostgresSessionStore(DB *sqlx.DB) *PostgresSessionStore {
-	return &PostgresSessionStore{database:DB}
+func NewPostgresSessionStore(db *sqlx.DB) *postgresSessionStore {
+	return &postgresSessionStore{database: db}
 }
 
-func generateRandomToken(length int) (string, error) {
-	b := make([]byte, length)
-	if _,err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.EncodeToString(b),nil
-}
-
-func hashToken(token string) string {
-	hash := sha256.Sum256([]byte(token))
-	return base64.URLEncoding.EncodeToString(hash[:])
-}
-
-func (s *PostgresSessionStore) Create(ctx context.Context, userID int64, duration time.Duration) (string, *models.Session, error){
-	rawToken, err := generateRandomToken(32)
-	if err != nil {
-		return "", nil, err
-	}
-	tokenHash := hashToken(rawToken)
-	expiresAt := time.Now().Add(duration)
-	var session models.Session
+func (s *postgresSessionStore) Create(ctx context.Context, session *models.Session) (*models.Session, error) {
 	query := `INSERT INTO sessions(user_id, token_hash, expires_at) 
-			  VALUES ($1, $2, $3)
-			  RETURNING id, user_id, token_hash, expires_at`
-	err = s.database.GetContext(ctx, &session, query, userID, tokenHash, expiresAt)
-	if err != nil {
-		return"", nil, err
-	}
-	return rawToken, &session, nil
-}
+              VALUES ($1, $2, $3)
+              RETURNING id, user_id, token_hash, expires_at, created_at`
 
-func (s *PostgresSessionStore) GetByToken(ctx context.Context, token string) (*models.Session, error) {
-	tokenHash := hashToken(token)
-	var session models.Session
-	query := `SELECT id, user_id,token_hash, expires_at
-			  FROM sessions 
-			  WHERE token_hash = $1`
-	err := s.database.GetContext(ctx, &session, query, tokenHash)
+	var newSession models.Session
+	err := s.database.QueryRowContext(
+		ctx,
+		query,
+		session.UserID,
+		session.TokenHash,
+		session.ExpiresAt,
+	).Scan(
+		&newSession.ID,
+		&newSession.UserID,
+		&newSession.TokenHash,
+		&newSession.ExpiresAt,
+		&newSession.CreatedAt,
+	)
+
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, ErrNotFound
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			switch pqErr.Code {
+			case errCodeForeignKeyViolation:
+				if pqErr.Constraint == constraintSessionUserFK {
+					return nil, models.ErrUserNotFound
+				}
+			case errCodeUniqueViolation:
+				if pqErr.Constraint == constraintTokenHashUnique {
+					return nil, models.ErrTokenConflict
+				}
+			case errCodeStringDataRightTruncation:
+				return nil, models.ErrValueTooLong
+			}
 		}
-		return nil, err
+		return nil, fmt.Errorf("セッションの生成に失敗しました: %w", err)
 	}
-	//if session.IsExpired() {
-		//return nil, errors.New("セッションの期限が切れているので、無効です")
-	//}
-	return &session, nil
+
+	newSession.ExpiresAt = newSession.ExpiresAt.UTC()
+	newSession.CreatedAt = newSession.CreatedAt.UTC()
+	return &newSession, nil
 }
 
+func (s *postgresSessionStore) GetByHash(ctx context.Context, tokenHash string) (*models.Session, error) {
+	query := `SELECT id, user_id, token_hash, expires_at, created_at FROM sessions WHERE token_hash = $1`
 
-// will be decouplied （疎結合）
+	var newSession models.Session
+	err := s.database.GetContext(ctx, &newSession, query, tokenHash)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, models.ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("tokenhashによるセッション取得に失敗しました: %w", err)
+	}
 
+	newSession.ExpiresAt = newSession.ExpiresAt.UTC()
+	newSession.CreatedAt = newSession.CreatedAt.UTC()
+	return &newSession, nil
+}
+
+func (s *postgresSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt time.Time, id int64) error {
+	query := `UPDATE sessions SET expires_at = $1 WHERE id = $2`
+
+	result, err := s.database.ExecContext(ctx, query, expiresAt, id)
+
+	if err != nil {
+		return fmt.Errorf("セッション期限の更新に失敗しました: %w", err)
+	}
+	
+	rows, err := result.RowsAffected()
+	if rows == 0 {
+		return models.ErrSessionNotFound
+	}
+
+	return nil
+}
