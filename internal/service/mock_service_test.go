@@ -53,6 +53,12 @@ func(m *mockSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt time.Ti
 	args := m.Called(ctx, expiresAt, id)
 	return args.Error(0)
 }
+
+func(m *mockSessionStore) DeleteByHash(ctx context.Context, tokenHash string) error {
+	args := m.Called(ctx,tokenHash)
+	return args.Error(0)
+}
+
 type mockTweetStore struct {
 	mock.Mock
 }

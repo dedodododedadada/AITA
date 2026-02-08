@@ -36,7 +36,7 @@ func main() {
 
 	router := api.SetupRouter(userHandler, tweetHandler, sessionService)
 
-	//srv := &http.Server{}
+
 	log.Printf("サーバーが起動し、ポート%sで待機中です",config.ServerAddress)
 	if err :=router.Run(config.ServerAddress); err != nil{
 		log.Fatal("サーバーの起動に失敗しました",err)

@@ -40,6 +40,11 @@ func (m *mockSessionService) Issue(ctx context.Context, userID int64) (*models.I
 	return testutils.SafeGet[models.IssueResponse](args, 0), args.Error(1)
 }
 
+func(m *mockSessionService) Revoke(ctx context.Context, token string) error {
+	args := m.Called(ctx, token)
+	return args.Error(0)
+}
+
 func (m *mockSessionService)Validate(ctx context.Context, token string) (*models.Session, error) {
 	args := m.Called(ctx, token)
 	return testutils.SafeGet[models.Session](args, 0), args.Error(1)

@@ -54,10 +54,14 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 ├── internal/
 │   ├── api/           #　HTTPハンドラー, ルーティング, ミドルウェア
 │   ├── config         #　設定情報の読み込み (env, yaml)
+│   ├── contextkeys    #　
 │   ├── db/            #　ストレージ実装 (Postgres/Redis/ES)
 │   ├── models/        #　データモデル定義
-│   ├── pkg/testutils  #　ユニットテストの補助関数（ヘルパー）
-│   └── init-db        #  テートデータベース作成
+│   ├── pkg/
+│   │    ├── crypto    #
+│   │    ├── testutils #　ユニットテストの補助関数（ヘルパー）
+│   │    └── utils     #
+│   └── service        #  テートデータベース作成
 ├── scripts
 │   └── init-db        #  DB環境構築用スクリプト（Docker起動など）
 ├── migrations/        #　SQLマイグレーションファイル

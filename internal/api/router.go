@@ -18,6 +18,7 @@ func SetupRouter(
 		protected.Use(AuthMiddleware(sessionService))
 		{
 			protected.GET("/me", userHandler.GetMe)
+			protected.POST("/logout", userHandler.Logout)
 			tweets := protected.Group("/tweets")
 			{
 				tweets.POST("", tweetHandler.Create)

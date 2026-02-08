@@ -15,6 +15,7 @@ import (
 
 func TestAuthMiddleware(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
 		name           string
@@ -34,8 +35,8 @@ func TestAuthMiddleware(t *testing.T) {
 			expectedUserID: 123,
 		},
 		{
-			name:       "認証成功:プレフィックスなしでもServiceが許容する場合",
-			authHeader: "raw_token_string",
+			name:       "認証成功:大文字でもServiceが許容する場合",
+			authHeader: "BEARER raw_token_string",
 			setupMock: func(m *mockSessionService) {
 				session := &models.Session{UserID: 456}
 				m.On("Validate", mock.Anything, "raw_token_string").Return(session, nil)
@@ -71,18 +72,14 @@ func TestAuthMiddleware(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// 1. 准备 Mock
 			mSession := new(mockSessionService)
 			tt.setupMock(mSession)
 
-			// 2. 准备 Gin 环境
 			w := httptest.NewRecorder()
 			r := gin.New()
 
-			// 注册中间件
 			r.Use(AuthMiddleware(mSession))
 
-			// 注册一个简单的 Handler 用于验证中间件是否通过以及 Context 是否正确注入
 			r.GET("/test", func(c *gin.Context) {
 				userID, exists := c.Get(contextkeys.AuthPayloadKey)
 				if exists {
@@ -92,14 +89,12 @@ func TestAuthMiddleware(t *testing.T) {
 				}
 			})
 
-			// 3. 执行请求
 			req := httptest.NewRequest(http.MethodGet, "/test", nil)
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
 			r.ServeHTTP(w, req)
 
-			// 4. 断言验证
 			assert.Equal(t, tt.expectedStatus, w.Code)
 
 			if tt.expectedStatus == http.StatusOK {

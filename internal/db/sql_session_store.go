@@ -97,3 +97,27 @@ func (s *postgresSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt ti
 
 	return nil
 }
+
+func (s *postgresSessionStore) DeleteByHash(ctx context.Context, tokenHash string) error {
+    query := `DELETE FROM sessions WHERE token_hash = $1`
+    result, err := s.database.ExecContext(ctx, query, tokenHash)
+    if err != nil {
+        return fmt.Errorf("セッションの削除に失敗しました: %w", err)
+    }
+
+    rows, _ := result.RowsAffected()
+    if rows == 0 {
+        return models.ErrSessionNotFound
+    }
+    return nil
+}
+
+func (s *postgresSessionStore) DeleteAllByUserID(ctx context.Context, userID int64) error {
+	query := ` DELETE FROM sessions WHERE user_id = $1`
+	_, err := s.database.ExecContext(ctx, query, userID)
+	if err != nil {
+		return fmt.Errorf("ユーザーの全セッション削除に失敗しました: %w", err)
+	}
+
+	return nil
+}

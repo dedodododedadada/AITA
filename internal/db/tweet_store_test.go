@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -89,8 +90,8 @@ func TestCreateTweetWhileError(t *testing.T) {
 		}
 		createdTweet, err := tempTweetStore.CreateTweet(ctx, tweet)
 		require.Error(t, err, "内部エラーの場合、エラーを返すべきです")
-		require.Contains(t, err.Error(), "ツイートの挿入に失敗しました")
+		assert.Contains(t, err.Error(), "ツイートの挿入に失敗しました")
 		t.Logf("エラーは: %v\n", err)
-		require.Nil(t, createdTweet, "エラー時、生成されたツイートはnilであるべきです")
+		assert.Nil(t, createdTweet, "エラー時、生成されたツイートはnilであるべきです")
 	})
 }

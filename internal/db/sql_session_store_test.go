@@ -242,15 +242,6 @@ func TestUpdateExpiredAt(t *testing.T) {
 		require.NoError(t, err)
 		assert.WithinDuration(t, newExpiry, updatedSession.ExpiresAt, time.Second)
 	})
-
-	t.Run("存在しないIDを指定した場合、ErrSessionNotFoundを返すこと", func(t *testing.T) {
-		nonExistentID := int64(999999)
-		newExpiry := time.Now().Add(24 * time.Hour).UTC()
-
-		err := testSessionStore.UpdateExpiresAt(ctx, newExpiry, nonExistentID)
-		assert.ErrorIs(t, err, models.ErrSessionNotFound)
-	})
-
 }
 
 func TestUpdateExpiredAtWhileErr(t *testing.T) {
@@ -274,6 +265,14 @@ func TestUpdateExpiredAtWhileErr(t *testing.T) {
 	createdSession, err := testSessionStore.Create(ctx, initialSession)
 	require.NoError(t, err)
 
+	t.Run("存在しないIDを指定した場合、ErrSessionNotFoundを返すこと", func(t *testing.T) {
+		nonExistentID := int64(999999)
+		newExpiry := time.Now().Add(24 * time.Hour).UTC()
+
+		err := testSessionStore.UpdateExpiresAt(ctx, newExpiry, nonExistentID)
+		assert.ErrorIs(t, err, models.ErrSessionNotFound)
+	})
+
 	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
 		tempDB, _ := testutils.OpenDB(testContext.DSN)
 		tempStore := NewPostgresSessionStore(tempDB)
@@ -281,8 +280,100 @@ func TestUpdateExpiredAtWhileErr(t *testing.T) {
 
 		err := tempStore.UpdateExpiresAt(ctx, time.Now(), createdSession.ID)
 
-		assert.Error(t, err)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "セッション期限の更新に失敗しました")
+		t.Logf("期待通りキャッチされたエラー: %v", err)
+	})
+}
+
+func TestDeleteByHash(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username:     "update_test_user",
+		Email:        "update_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+	hash := "initial_hash"
+	initialSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: hash,
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	createdSession, err := testSessionStore.Create(ctx, initialSession)
+	require.NoError(t, err)
+	require.NotNil(t, createdSession)
+
+	t.Run("正常にハッシュで削除できること", func(t *testing.T) {
+	err = testSessionStore.DeleteByHash(ctx, hash)
+		require.NoError(t, err)
+		test, err := testSessionStore.GetByHash(ctx, hash)
+		require.ErrorIs(t, err, models.ErrSessionNotFound)
+		require.Nil(t, test)
+	})
+	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, _ := testutils.OpenDB(testContext.DSN)
+		tempStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		err := tempStore.DeleteByHash(ctx, hash)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "セッションの削除に失敗しました")
+		t.Logf("期待通りキャッチされたエラー: %v", err)
+	})
+
+	t.Run("存在しないトークンを指定した場合、ErrSessionNotFoundを返すこと", func(t *testing.T) {
+		wrongToken := "wrong_hash"
+		err := testSessionStore.DeleteByHash(ctx, wrongToken)
+		assert.ErrorIs(t, err, models.ErrSessionNotFound)
+	})
+}
+
+func TestDeleteAllByUserID(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	initUser := &models.User{
+		Username:     "update_test_user",
+		Email:        "update_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+	hashList := []string{"token_hash_1", "token_hash_2", "token_hash_3"}
+	for i := range hashList {
+		initSession := &models.Session{
+			UserID: createdUser.ID,
+			TokenHash: hashList[i],
+			ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+		}
+		createdSession, err := testSessionStore.Create(ctx, initSession)
+		require.NoError(t, err)
+		require.NotNil(t, createdSession)
+	}
+
+	t.Run("正常にユーザーIDで削除できること", func(t *testing.T) {
+		err = testSessionStore.DeleteAllByUserID(ctx, createdUser.ID)
+		require.NoError(t, err)
+		for i := range hashList{
+			createdSession, err := testSessionStore.GetByHash(ctx, hashList[i])
+			require.ErrorIs(t, err, models.ErrSessionNotFound)
+			require.Nil(t, createdSession)
+		}
+	})
+
+	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, _ := testutils.OpenDB(testContext.DSN)
+		tempStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		err := tempStore.DeleteAllByUserID(ctx, createdUser.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ユーザーの全セッション削除に失敗しました")
 		t.Logf("期待通りキャッチされたエラー: %v", err)
 	})
 }

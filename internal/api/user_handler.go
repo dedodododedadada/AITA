@@ -16,19 +16,20 @@ type UserService interface {
 	ToMyPage(ctx context.Context, id int64) (*models.User, error)             
 }
 
-type SessionIssuer interface {
+type SessionManageer interface {
     Issue(ctx context.Context, userID int64) (*models.IssueResponse, error)
+    Revoke(ctx context.Context, token string) error 
 }
 
 type UserHandler struct {
 	userService    UserService
-	sessionService SessionIssuer
+	sessionService SessionManageer
 }
 
-func NewUserHandler(usvc UserService, ssvc SessionIssuer) *UserHandler {
+func NewUserHandler(usvc UserService, sm SessionManageer) *UserHandler {
 	return &UserHandler{
 		userService:    usvc,
-		sessionService: ssvc,
+		sessionService: sm,
 	}
 }
 
@@ -96,4 +97,14 @@ func (h *UserHandler) GetMe(c *gin.Context) {
     }
 
     c.JSON(http.StatusOK, models.Success(models.NewUserResponse(user)))
+}
+
+func (h *UserHandler) Logout(c *gin.Context) {
+    authHeader := c.GetHeader("Authorization")
+
+    if err := h.sessionService.Revoke(c.Request.Context(), authHeader); err != nil {
+        c.JSON(models.GetStatusCode(err), models.Fail(err))
+    }
+
+    c.JSON(http.StatusOK, models.SuccessMsg("ログアウトしました"))
 }

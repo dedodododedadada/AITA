@@ -16,6 +16,7 @@ import (
 )
 
 func TestSignUp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 	tests := []struct {
 		name           string
 		requestBody    any
@@ -124,6 +125,7 @@ func TestSignUp(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 	tests := []struct {
 		name           string
 		requestBody    any
@@ -151,7 +153,7 @@ func TestLogin(t *testing.T) {
 			},
 		},
 		{
-			name:        "JSON構文エラー",
+			name: "JSON構文エラー",
 			requestBody: `{"email": "bad-json"...`, 
 			setupMock:   func(mu *mockUserService, ms *mockSessionService) {},
 			expectedStatus: http.StatusBadRequest,
@@ -226,6 +228,7 @@ func TestLogin(t *testing.T) {
 }
 
 func TestGetMe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 	tests := []struct {
 		name           string
 		setupContext   func(c *gin.Context)
@@ -301,3 +304,66 @@ func TestGetMe(t *testing.T) {
 	}
 }
 
+func TestUserHandler_Logout(t *testing.T) {
+    mockSvc := new(mockSessionService) 
+    handler := NewUserHandler(nil, mockSvc)
+
+    gin.SetMode(gin.TestMode)
+
+    validHeader := "Bearer valid_token_string_32_chars_long"
+
+    tests := []struct {
+        name           string
+        authHeader     string
+        setupMock      func()
+        expectedStatus int
+        expectMsg      string
+    }{
+        {
+            name:       "ログアウト成功",
+            authHeader: validHeader,
+            setupMock: func() {
+                mockSvc.On("Revoke", mock.Anything, validHeader).Return(nil)
+            },
+            expectedStatus: http.StatusOK,
+            expectMsg:      "ログアウトしました",
+        },
+        {
+            name:       "セッションが見つからない（不正なトークン形式など）",
+            authHeader: "InvalidHeader",
+            setupMock: func() {
+                mockSvc.On("Revoke", mock.Anything, "InvalidHeader").Return(models.ErrSessionNotFound)
+            },
+            expectedStatus: http.StatusUnauthorized, 
+        },
+        {
+            name:       "サーバー内部エラー",
+            authHeader: validHeader,
+            setupMock: func() {
+                mockSvc.On("Revoke", mock.Anything, validHeader).Return(errors.New("db error"))
+            },
+            expectedStatus: http.StatusInternalServerError,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mockSvc.ExpectedCalls = nil
+
+            tt.setupMock()
+
+            w := httptest.NewRecorder()
+            c, _ := gin.CreateTestContext(w)
+            
+            c.Request, _ = http.NewRequest(http.MethodPost, "/logout", nil)
+            c.Request.Header.Set("Authorization", tt.authHeader)
+            handler.Logout(c)
+
+            assert.Equal(t, tt.expectedStatus, w.Code)
+            if tt.expectMsg != "" {
+                assert.Contains(t, w.Body.String(), tt.expectMsg)
+            }
+            mockSvc.AssertExpectations(t)
+        })
+    }
+}

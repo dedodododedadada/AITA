@@ -1,7 +1,8 @@
 package models
 
 type Response struct {
-    Data    any    `json:"data,omitempty"`    
+    Data    any    `json:"data,omitempty"`  
+    Message string `json:"message,omitempty"`  
     Error   string `json:"error,omitempty"`   
     Code    string `json:"code,omitempty"`    
     Meta    any    `json:"meta,omitempty"`    
@@ -17,6 +18,12 @@ func Fail(err error) Response {
 func Success(data any) Response {
     return Response{
         Data: data,
+    }
+}
+
+func SuccessMsg(msg string) Response{
+    return Response{
+        Message: msg,
     }
 }
 

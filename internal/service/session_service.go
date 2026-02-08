@@ -12,6 +12,7 @@ type SessionStore interface {
 	Create(ctx context.Context, session *models.Session) (*models.Session, error)
 	GetByHash(ctx context.Context, tokenHash string) (*models.Session, error)
 	UpdateExpiresAt(ctx context.Context, expiresAt time.Time, id int64) error
+    DeleteByHash(ctx context.Context, tokenHash string) error 
 }
 
 type UserInfoProvider interface {
@@ -38,6 +39,23 @@ func NewSessionService(ss SessionStore, usvc UserInfoProvider, tm TokenManager) 
     }
 } 
 
+func (s *sessionService) validateAndHash(token string) (string, error) {
+    if token == "" || len(token) < 32 || len(token) > 255 {
+        return "", models.ErrSessionNotFound
+    }
+    return s.tokenManager.Hash(token), nil
+}
+
+func (h *sessionService) extractBearerToken(header string) string {
+    if header == "" {
+        return ""
+    }
+    parts := strings.SplitN(header, " ", 2)
+    if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+        return strings.TrimSpace(parts[1])
+    }
+    return ""
+}
 
 func (s *sessionService) Issue(ctx context.Context, userID int64) (*models.IssueResponse, error) {
     if userID <= 0 {
@@ -67,14 +85,10 @@ func (s *sessionService) Issue(ctx context.Context, userID int64) (*models.Issue
 }
 
 func (s *sessionService) authenticate(ctx context.Context, token string) (*models.Session, error) {
-    if token == "" {
-        return nil, models.ErrSessionNotFound
+    tokenHash, err := s.validateAndHash(token)
+    if err != nil {
+        return nil, err
     }
-    if len(token) < 32 || len(token) > 255  {
-        return nil, models.ErrSessionNotFound
-    }
-    
-    tokenHash := s.tokenManager.Hash(token)
     session, err := s.sessionStore.GetByHash(ctx, tokenHash)
     if err != nil {
         return nil, fmt.Errorf("セッションの取得に失敗しました: %w", err)
@@ -87,19 +101,10 @@ func (s *sessionService) authenticate(ctx context.Context, token string) (*model
 }
 
 func (s *sessionService) Validate(ctx context.Context, token string) (*models.Session, error){
-    if token == "" {
+    finalToken := s.extractBearerToken(token)
+    if finalToken == "" {
         return nil, models.ErrSessionNotFound
     }
-
-    parts := strings.SplitN(token, " ", 2)
-    if len(parts) != 2 {
-        return nil, models.ErrSessionNotFound
-    }
-    if !strings.EqualFold(parts[0], "bearer") {
-        return nil, models.ErrSessionNotFound
-    }
-
-    finalToken := strings.TrimSpace(parts[1])
     session, err := s.authenticate(ctx, finalToken)
     if err != nil {
         return nil, err
@@ -125,5 +130,22 @@ func (s *sessionService) refreshSession(ctx context.Context, session *models.Ses
     }
 
     session.ExpiresAt = newExpiry
+    return nil
+}
+
+func (s *sessionService) Revoke(ctx context.Context, token string) error {
+    finalToken := s.extractBearerToken(token)
+    if finalToken == "" {
+        return models.ErrSessionNotFound
+    }
+    tokenHash, err := s.validateAndHash(finalToken)
+    if err != nil {
+        return err
+    }
+    err = s.sessionStore.DeleteByHash(ctx, tokenHash)
+    if err != nil {
+        return fmt.Errorf("セッションの削除に失敗しました: %w", err)
+    }
+
     return nil
 }

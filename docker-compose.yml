@@ -12,8 +12,26 @@ services:
     volumes:
       - postgres_data_v2:/var/lib/postgresql/data
       - ./scripts/init-db:/docker-entrypoint-initdb.d
+    networks:
+      - aita_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: aita_redis
+    ports:
+      - "${REDIS_PORT}:6379"  
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"] 
+    networks:
+      - aita_network
+
+networks:
+  aita_network:
+    driver: bridge
 
 volumes:
   postgres_data_v2:
+  redis_data:
 
 

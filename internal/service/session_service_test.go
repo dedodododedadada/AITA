@@ -7,12 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIssue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 	tests := map[string]struct {
 		userID    int64
 		setupMock func(ms *mockSessionStore, mt *mockTokenManager)
@@ -432,4 +434,114 @@ func TestRefreshSession(t *testing.T) {
 	}
 }
 
+func TestRevoke(t *testing.T) {
+    type testCase struct {
+        name           string
+        header         string 
+        setupMock      func(ms *mockSessionStore, mt *mockTokenManager)
+        wantedErr      error
+        expectContains string
+    }
+
+    validToken := "valid_token_that_is_long_enough_32char"
+    validHeader := "Bearer " + validToken
+
+    tests := []testCase{
+        {
+            name:   "正常にログアウトできる(正規のBearerヘッダー)",
+            header: validHeader,
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+                mt.On("Hash", validToken).Return("token_hash")
+                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(nil)
+            },
+        },
+        {
+            name:      "ヘッダーが空",
+            header:    "",
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+            wantedErr: models.ErrSessionNotFound,
+        },
+        {
+            name:      "Bearerプレフィックスがない",
+            header:    validToken, 
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+            wantedErr: models.ErrSessionNotFound,
+        },
+        {
+            name:      "Bearerの綴りがおかしい",
+            header:    "Beareeee " + validToken,
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+            wantedErr: models.ErrSessionNotFound,
+        },
+        {
+            name:   "大文字のBEARERでも認識されること",
+            header: "BEARER " + validToken,
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+                mt.On("Hash", validToken).Return("token_hash")
+                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(nil)
+            },
+        },
+		{
+            name:      "tokenが空(Bearerのみ)",
+            header:    "Bearer ",
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+            wantedErr: models.ErrSessionNotFound,
+        },
+		{
+    		name:   "tokenが31文字(短すぎる)",
+    		header: "Bearer " + strings.Repeat("a", 31),
+    		setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+    		wantedErr: models.ErrSessionNotFound,
+		},
+		{
+		    name:   "tokenが256文字(長すぎる)",
+    		header: "Bearer " + strings.Repeat("a", 256),
+   		    setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+    		wantedErr: models.ErrSessionNotFound,
+		},
+		{
+    		name:   "tokenがちょうど32文字(境界値・成功)",
+    		header: "Bearer " + strings.Repeat("a", 32),
+    		setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+       			mt.On("Hash", strings.Repeat("a", 32)).Return("hash_32")
+        		ms.On("DeleteByHash", mock.Anything, "hash_32").Return(nil)
+    		},
+    		wantedErr: nil,
+		},
+        {
+            name:   "DBエラー時にラップされたエラーを返す",
+            header: validHeader,
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+                mt.On("Hash", validToken).Return("token_hash")
+                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(errMockInternal)
+            },
+            wantedErr:      errMockInternal,
+            expectContains: "セッションの削除に失敗しました",
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            ms := new(mockSessionStore)
+            mt := new(mockTokenManager)
+            mu := new(mockUserService)
+            svc := NewSessionService(ms, mu, mt)
+
+            tt.setupMock(ms, mt)
+
+            err := svc.Revoke(context.Background(), tt.header)
+
+            if tt.wantedErr != nil {
+                assert.ErrorIs(t, err, tt.wantedErr)
+                if tt.expectContains != "" {
+                    assert.Contains(t, err.Error(), tt.expectContains)
+                }
+            } else {
+                assert.NoError(t, err)
+            }
+            ms.AssertExpectations(t)
+            mt.AssertExpectations(t)
+        })
+    }
+}
 

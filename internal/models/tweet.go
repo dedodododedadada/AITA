@@ -18,11 +18,11 @@ type CreateTweetRequest struct {
 }
 
 type TweetResponse struct{
-	ID            int64        `db:"id"`
-	UserID        int64		   `db:"user_id"`
-	Content       string       `db:"content"`
-	ImageURL     *string       `db:"image_url"`
-	CreatedAt     time.Time    `db:"created_at"` 
+	ID            int64        `json:"id"`
+	UserID        int64		   `json:"user_id"`
+	Content       string       `json:"content"`
+	ImageURL     *string       `json:"image_url"`
+	CreatedAt     time.Time    `json:"created_at"` 
 }
 
 func NewTweetResponse(tweet *Tweet) TweetResponse {
