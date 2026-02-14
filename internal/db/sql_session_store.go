@@ -1,6 +1,7 @@
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"database/sql"
@@ -46,14 +47,14 @@ func (s *postgresSessionStore) Create(ctx context.Context, session *models.Sessi
 			switch pqErr.Code {
 			case errCodeForeignKeyViolation:
 				if pqErr.Constraint == constraintSessionUserFK {
-					return nil, models.ErrUserNotFound
+					return nil, errcode.ErrUserNotFound
 				}
 			case errCodeUniqueViolation:
 				if pqErr.Constraint == constraintTokenHashUnique {
-					return nil, models.ErrTokenConflict
+					return nil, errcode.ErrTokenConflict
 				}
 			case errCodeStringDataRightTruncation:
-				return nil, models.ErrValueTooLong
+				return nil, errcode.ErrValueTooLong
 			}
 		}
 		return nil, fmt.Errorf("セッションの生成に失敗しました: %w", err)
@@ -71,7 +72,7 @@ func (s *postgresSessionStore) GetByHash(ctx context.Context, tokenHash string) 
 	err := s.database.GetContext(ctx, &newSession, query, tokenHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, models.ErrSessionNotFound
+			return nil, errcode.ErrSessionNotFound
 		}
 		return nil, fmt.Errorf("tokenhashによるセッション取得に失敗しました: %w", err)
 	}
@@ -89,27 +90,34 @@ func (s *postgresSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt ti
 	if err != nil {
 		return fmt.Errorf("セッション期限の更新に失敗しました: %w", err)
 	}
-	
+
 	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("影響を受けた行数の取得に失敗しました: %w", err)
+	}
+
 	if rows == 0 {
-		return models.ErrSessionNotFound
+		return errcode.ErrSessionNotFound
 	}
 
 	return nil
 }
 
-func (s *postgresSessionStore) DeleteByHash(ctx context.Context, tokenHash string) error {
-    query := `DELETE FROM sessions WHERE token_hash = $1`
-    result, err := s.database.ExecContext(ctx, query, tokenHash)
-    if err != nil {
-        return fmt.Errorf("セッションの削除に失敗しました: %w", err)
-    }
+func (s *postgresSessionStore) DeleteBySessionID(ctx context.Context, sessionID int64) error {
+	query := `DELETE FROM sessions WHERE id = $1`
+	result, err := s.database.ExecContext(ctx, query, sessionID)
+	if err != nil {
+		return fmt.Errorf("セッションの削除に失敗しました: %w", err)
+	}
 
-    rows, _ := result.RowsAffected()
-    if rows == 0 {
-        return models.ErrSessionNotFound
-    }
-    return nil
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("影響を受けた行数の取得に失敗しました: %w", err)
+	}
+	if rows == 0 {
+		return errcode.ErrSessionNotFound
+	}
+	return nil
 }
 
 func (s *postgresSessionStore) DeleteAllByUserID(ctx context.Context, userID int64) error {

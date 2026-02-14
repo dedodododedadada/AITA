@@ -53,14 +53,16 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 │   └── api/           #　メインプログラム (main.go)
 ├── internal/
 │   ├── api/           #　HTTPハンドラー, ルーティング, ミドルウェア
-│   ├── config         #　設定情報の読み込み (env, yaml)
-│   ├── contextkeys    #　
+│   ├── configuaration #　設定情報の読み込み (env, yaml)
+│   ├── contextkeys    #　コンテキストキー定義
 │   ├── db/            #　ストレージ実装 (Postgres/Redis/ES)
+│   ├── dto/           #  Data Transfer Object。リクエスト/レスポンスの構造体と変換処理。業務エラーコードとHTTPステータスのマッピング。
+│   ├── errcode/       #  エラー定義。
 │   ├── models/        #　データモデル定義
 │   ├── pkg/
-│   │    ├── crypto    #
+│   │    ├── crypto    #　暗号化関連。パスワードのハッシュ化やsha256でtokenの生成・検証
 │   │    ├── testutils #　ユニットテストの補助関数（ヘルパー）
-│   │    └── utils     #
+│   │    └── utils     #  汎用関数
 │   └── service        #  テートデータベース作成
 ├── scripts
 │   └── init-db        #  DB環境構築用スクリプト（Docker起動など）
@@ -76,7 +78,7 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 
 [x] DB層のトークン機能とユーザー機能のユニットテスト
 
-[ ] ツイート投稿機能の実装。
+[x] ツイート投稿機能の実装。
 
 [ ] Redisによるタイムライン（Feed）のキャッシュ最適化。
 

@@ -1,10 +1,10 @@
 package service
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -12,7 +12,7 @@ type SessionStore interface {
 	Create(ctx context.Context, session *models.Session) (*models.Session, error)
 	GetByHash(ctx context.Context, tokenHash string) (*models.Session, error)
 	UpdateExpiresAt(ctx context.Context, expiresAt time.Time, id int64) error
-    DeleteByHash(ctx context.Context, tokenHash string) error 
+    DeleteBySessionID(ctx context.Context, sessionID int64) error
 }
 
 type UserInfoProvider interface {
@@ -40,31 +40,23 @@ func NewSessionService(ss SessionStore, usvc UserInfoProvider, tm TokenManager) 
 } 
 
 func (s *sessionService) validateAndHash(token string) (string, error) {
-    if token == "" || len(token) < 32 || len(token) > 255 {
-        return "", models.ErrSessionNotFound
+    if token == ""  {
+        return "", errcode.ErrSessionNotFound
+    }
+    if len(token) < 32 || len(token) > 255 {
+        return "", errcode.ErrInvalidTokenFormat
     }
     return s.tokenManager.Hash(token), nil
 }
 
-func (h *sessionService) extractBearerToken(header string) string {
-    if header == "" {
-        return ""
-    }
-    parts := strings.SplitN(header, " ", 2)
-    if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
-        return strings.TrimSpace(parts[1])
-    }
-    return ""
-}
-
-func (s *sessionService) Issue(ctx context.Context, userID int64) (*models.IssueResponse, error) {
+func (s *sessionService) Issue(ctx context.Context, userID int64) (string, error) {
     if userID <= 0 {
-        return nil, models.ErrRequiredFieldMissing
+        return "", errcode.ErrRequiredFieldMissing
     }
 
     token, err := s.tokenManager.Generate(32)
     if err != nil {
-        return nil, fmt.Errorf("トークンの生成に失敗しました: %w", err)
+        return "", fmt.Errorf("トークンの生成に失敗しました: %w", err)
     }
 
     sessionData := &models.Session{
@@ -73,15 +65,12 @@ func (s *sessionService) Issue(ctx context.Context, userID int64) (*models.Issue
         ExpiresAt: time.Now().Add(24 * time.Hour).UTC(), 
     }
 
-    session, err := s.sessionStore.Create(ctx, sessionData)
+    _, err = s.sessionStore.Create(ctx, sessionData)
     if err != nil {
-        return nil, fmt.Errorf("発行に失敗しました: %w", err)
+        return "", fmt.Errorf("発行に失敗しました: %w", err)
     }
     
-    return &models.IssueResponse{
-        Session: session,
-        Token: token,
-    }, nil
+    return token, nil
 }
 
 func (s *sessionService) authenticate(ctx context.Context, token string) (*models.Session, error) {
@@ -95,17 +84,13 @@ func (s *sessionService) authenticate(ctx context.Context, token string) (*model
     }
 
     if session.IsExpired() {
-        return nil, models.ErrSessionExpired
+        return nil, errcode.ErrSessionExpired
     }
     return session, nil
 }
 
 func (s *sessionService) Validate(ctx context.Context, token string) (*models.Session, error){
-    finalToken := s.extractBearerToken(token)
-    if finalToken == "" {
-        return nil, models.ErrSessionNotFound
-    }
-    session, err := s.authenticate(ctx, finalToken)
+    session, err := s.authenticate(ctx, token)
     if err != nil {
         return nil, err
     }
@@ -133,16 +118,11 @@ func (s *sessionService) refreshSession(ctx context.Context, session *models.Ses
     return nil
 }
 
-func (s *sessionService) Revoke(ctx context.Context, token string) error {
-    finalToken := s.extractBearerToken(token)
-    if finalToken == "" {
-        return models.ErrSessionNotFound
+func (s *sessionService) Revoke(ctx context.Context, sessionID int64) error {
+    if sessionID <= 0 {
+        return errcode.ErrInvalidSessionID
     }
-    tokenHash, err := s.validateAndHash(finalToken)
-    if err != nil {
-        return err
-    }
-    err = s.sessionStore.DeleteByHash(ctx, tokenHash)
+    err := s.sessionStore.DeleteBySessionID(ctx, sessionID)
     if err != nil {
         return fmt.Errorf("セッションの削除に失敗しました: %w", err)
     }

@@ -1,7 +1,7 @@
 package api
 
 import (
-	"aita/internal/contextkeys"
+	"aita/internal/dto"
 	"aita/internal/models"
 	"context"
 
@@ -11,22 +11,22 @@ import (
 )
 
 type UserService interface {
-	Register(ctx context.Context, req *models.SignupRequest) (*models.User, error)
-	Login(ctx context.Context, email, password string) (*models.User, error) 
-	ToMyPage(ctx context.Context, id int64) (*models.User, error)             
+	Register(ctx context.Context, username string, email string, password string) (*models.User, error) 
+	Login(ctx context.Context, email, password string) (*models.User, error)
+	ToMyPage(ctx context.Context, id int64) (*models.User, error)
 }
 
-type SessionManageer interface {
-    Issue(ctx context.Context, userID int64) (*models.IssueResponse, error)
-    Revoke(ctx context.Context, token string) error 
+type SessionManager interface {
+	Issue(ctx context.Context, userID int64) (string, error)
+	Revoke(ctx context.Context, sessionID int64) error 
 }
 
 type UserHandler struct {
 	userService    UserService
-	sessionService SessionManageer
+	sessionService SessionManager
 }
 
-func NewUserHandler(usvc UserService, sm SessionManageer) *UserHandler {
+func NewUserHandler(usvc UserService, sm SessionManager) *UserHandler {
 	return &UserHandler{
 		userService:    usvc,
 		sessionService: sm,
@@ -34,77 +34,89 @@ func NewUserHandler(usvc UserService, sm SessionManageer) *UserHandler {
 }
 
 func (h *UserHandler) respondWithToken(c *gin.Context, user *models.User, statusCode int) {
-	issueResponse, err := h.sessionService.Issue(c.Request.Context(), user.ID)
+	token, err := h.sessionService.Issue(c.Request.Context(), user.ID)
 	if err != nil {
-		c.JSON(models.GetStatusCode(err), models.Fail(err))
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
 		return
 	}
 
-	loginData := models.LoginResponse{
-        SessionToken: issueResponse.Token,
-        User:         models.NewUserResponse(user),
-    }
-    c.JSON(statusCode, models.Success(loginData))
+	loginData := dto.LoginResponse{
+		SessionToken: token,
+		User:         dto.NewUserResponse(user),
+	}
+	c.JSON(statusCode, dto.Success(loginData))
 }
 
 func (h *UserHandler) SignUp(c *gin.Context) {
-     var req models.SignupRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        appErr := models.FilterBindError(err)
-        c.JSON(models.GetStatusCode(appErr), models.Fail(appErr))
-        return
-    }
+	var req dto.SignupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		appErr := dto.FilterBindError(err)
+		c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+		return
+	}
 
-    user, err := h.userService.Register(c.Request.Context(), &req)
-    if err != nil {
-        c.JSON(models.GetStatusCode(err), models.Fail(err))
-        return
-    }
-    
-    h.respondWithToken(c, user, http.StatusCreated)
+	if err := req.Validate(); err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	user, err := h.userService.Register(c.Request.Context(), req.Username, req.Email, req.Password)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	h.respondWithToken(c, user, http.StatusCreated)
 }
 
 func (h *UserHandler) Login(c *gin.Context) {
-    var req models.LoginRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        appErr := models.FilterBindError(err)
-        c.JSON(models.GetStatusCode(appErr), models.Fail(appErr))
-        return  
-    }
+	var req dto.LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		appErr := dto.FilterBindError(err)
+		c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+		return
+	}
 
-    user, err := h.userService.Login(c.Request.Context(), req.Email, req.Password)
-    if err != nil {
-        c.JSON(models.GetStatusCode(err), models.Fail(err))
-        return
-    }
+	if err := req.Validate(); err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
 
-    h.respondWithToken(c, user, http.StatusOK)
+	user, err := h.userService.Login(c.Request.Context(), req.Email, req.Password)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	h.respondWithToken(c, user, http.StatusOK)
 }
 
 func (h *UserHandler) GetMe(c *gin.Context) {
-    val, exists := c.Get(contextkeys.AuthPayloadKey)
-    userID, ok := val.(int64)
-    if !exists || !ok {
-        err := models.ErrSessionNotFound
-        c.JSON(models.GetStatusCode(err), models.Fail(err))
-        return
-    }
+	auth, err := GetAuthContext(c)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
 
-    user, err := h.userService.ToMyPage(c.Request.Context(), userID)
-    if err != nil {
-        c.JSON(models.GetStatusCode(err), models.Fail(err))
-        return
-    }
+	user, err := h.userService.ToMyPage(c.Request.Context(), auth.UserID)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
 
-    c.JSON(http.StatusOK, models.Success(models.NewUserResponse(user)))
+	c.JSON(http.StatusOK, dto.Success(dto.NewUserResponse(user)))
 }
 
 func (h *UserHandler) Logout(c *gin.Context) {
-    authHeader := c.GetHeader("Authorization")
+	auth, err := GetAuthContext(c)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+	if err := h.sessionService.Revoke(c.Request.Context(), auth.SessionID); err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
 
-    if err := h.sessionService.Revoke(c.Request.Context(), authHeader); err != nil {
-        c.JSON(models.GetStatusCode(err), models.Fail(err))
-    }
-
-    c.JSON(http.StatusOK, models.SuccessMsg("ログアウトしました"))
+	c.JSON(http.StatusOK, dto.SuccessMsg("ログアウトしました"))
 }

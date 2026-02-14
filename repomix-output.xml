@@ -1,0 +1,4427 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.gitignore
+cmd/api/main.go
+docker-compose.yml
+go.mod
+internal/api/middleware_test.go
+internal/api/middleware.go
+internal/api/mock_test.go
+internal/api/router.go
+internal/api/tweet_create_test.go
+internal/api/tweet_handler.go
+internal/api/user_handler_test.go
+internal/api/user_handler.go
+internal/config/config.go
+internal/contextkeys/keys.go
+internal/db/const_db.go
+internal/db/main_store_test.go
+internal/db/redis_session_store.go
+internal/db/sql_session_store_test.go
+internal/db/sql_session_store.go
+internal/db/tweet_store_test.go
+internal/db/tweet_store.go
+internal/db/user_store_test.go
+internal/db/user_store.go
+internal/models/error.go
+internal/models/response.go
+internal/models/session.go
+internal/models/tweet.go
+internal/models/user.go
+internal/models/validation.go
+internal/pkg/crypto/password.go
+internal/pkg/crypto/token.go
+internal/pkg/testutils/test_helper.go
+internal/pkg/testutils/testdb.go
+internal/pkg/utils/helper.go
+internal/service/mock_service_test.go
+internal/service/session_service_test.go
+internal/service/session_service.go
+internal/service/tweet_service_test.go
+internal/service/tweet_service.go
+internal/service/user_service_test.go
+internal/service/user_service.go
+migrations/000001_create_initial_tables.down.sql
+migrations/000001_create_initial_tables.up.sql
+migrations/000002_add_created_at_to_sessions.down.sql
+migrations/000002_add_created_at_to_sessions.up.sql
+migrations/000003_add_content_limit_to_tweets.down.sql
+migrations/000003_add_content_limit_to_tweets.up.sql
+README.md
+scripts/init-db/init.sql
+tests/main_test.go
+tests/user_flow_test.go
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="internal/contextkeys/keys.go">
+package contextkeys
+
+type contextKeys string
+
+const(
+	AuthPayloadKey = "authorization_user_id"
+)
+</file>
+
+<file path="internal/db/const_db.go">
+package db
+
+const (
+	errCodeStringDataRightTruncation = "22001"
+	errCodeNotNullViolation          = "23502"
+	errCodeForeignKeyViolation       = "23503"
+	errCodeUniqueViolation           = "23505"
+	constraintSessionUserFK          = "sessions_user_id_fkey"
+	constraintTokenHashUnique        = "sessions_token_hash_key"
+	constraintTweetUserFK            = "tweets_user_id_fkey"
+	constraintUsernameK              = "users_username_key"
+	constraintUseremailK             = "users_email_key"
+	constraintTokenhashK             = "sessions_token_hash_key"
+)
+</file>
+
+<file path="internal/db/redis_session_store.go">
+package db
+</file>
+
+<file path="internal/db/sql_session_store_test.go">
+package db
+
+import (
+	"aita/internal/models"
+	"aita/internal/pkg/testutils"
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCreateSession(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	initUser := &models.User{
+		Username:     "token_test_user",
+		Email:        "token_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	t.Run("正常にセッションできること", func(t *testing.T) {
+		mockHash := "mock_hash_value_123"
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		sessionToCreate := &models.Session{
+			UserID:    createdUser.ID,
+			TokenHash: mockHash,
+			ExpiresAt: expiresAt,
+		}
+		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
+	
+		require.NoError(t, err, "Sessionの作成に失敗してはいけません")
+		require.NotNil(t, createdSession)
+		assert.Equal(t, createdUser.ID, createdSession.UserID)
+		assert.Equal(t, mockHash, createdSession.TokenHash)
+		assert.WithinDuration(t, expiresAt, createdSession.ExpiresAt, time.Second)
+		assert.NotZero(t, createdSession.CreatedAt)
+	})
+	
+}
+
+func TestCreateSessionWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	initUser := &models.User{
+		Username:     "token_test_user",
+		Email:        "token_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	t.Run("23503: ユーザーがない", func(t *testing.T) {
+		mockHash := "mock_hash_value_123"
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		sessionToCreate := &models.Session{
+			UserID:    int64(999999),
+			TokenHash: mockHash,
+			ExpiresAt: expiresAt,
+		}
+		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
+	
+		assert.ErrorIs(t, err, errcode.ErrUserNotFound)
+		assert.Nil(t, createdSession)
+	})
+
+	t.Run("23505: トークンハッシュの重複 (Unique Violation)", func(t *testing.T) {
+    	mockHash := "duplicate_hash"
+   		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+    	initSession := &models.Session{
+			UserID: createdUser.ID, 
+			TokenHash: mockHash, 
+			ExpiresAt: expiresAt,
+		}
+    	_, err := testSessionStore.Create(ctx, initSession)
+    	require.NoError(t, err)
+
+    	newSession := &models.Session{
+			UserID: createdUser.ID, 
+			TokenHash: mockHash, 
+			ExpiresAt: expiresAt,
+		}
+    	createdSession, err := testSessionStore.Create(ctx, newSession)
+
+    	assert.ErrorIs(t, err, errcode.ErrTokenConflict)
+		assert.Nil(t, createdSession)
+	})
+
+	t.Run("22001: tokenhash列長超過", func(t *testing.T) {
+		mockHash := strings.Repeat("a", 256)
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		sessionToCreate := &models.Session{
+			UserID:    createdUser.ID,
+			TokenHash: mockHash,
+			ExpiresAt: expiresAt,
+		}
+		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
+	
+		assert.ErrorIs(t, err, errcode.ErrValueTooLong)
+		assert.Nil(t, createdSession)
+	})
+
+	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+
+		tempSessionStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		mockHash := "mock_hash_value_123"
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		sessionToCreate := &models.Session{
+			UserID:    createdUser.ID,
+			TokenHash: mockHash,
+			ExpiresAt: expiresAt,
+		}
+		createdUser, err := tempSessionStore.Create(ctx, sessionToCreate)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "セッションの生成に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, createdUser)
+	})
+}
+
+func TestGetByHash(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	newUser := &models.User{
+		Username:     "test_get_token",
+		Email:        "get_token@example.com",
+		PasswordHash: "hash",
+	}
+	createdUser, err := testUserStore.Create(ctx, newUser)
+	require.NoError(t, err)
+
+	targetHash := "target_secret_hash"
+	initSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: targetHash,
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	createdSession, _ := testSessionStore.Create(ctx, initSession)
+	require.NoError(t, err)
+
+	t.Run("存在するHashで取得", func(t *testing.T) {
+		foundSession, err := testSessionStore.GetByHash(ctx, targetHash)
+
+		require.NoError(t, err)
+		require.NotNil(t, foundSession)
+		assert.Equal(t, createdSession.ID, foundSession.ID)
+		assert.Equal(t, createdSession.TokenHash, foundSession.TokenHash)
+		assert.Equal(t, createdSession.UserID, foundSession.UserID)
+		assert.Equal(t, createdSession.ExpiresAt, foundSession.ExpiresAt)
+		assert.Equal(t, createdSession.CreatedAt, foundSession.CreatedAt)
+	})
+}
+
+func TestGetByHashWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	newUser := &models.User{
+		Username:     "test_get_token",
+		Email:        "get_token@example.com",
+		PasswordHash: "hash",
+	}
+	createdUser, err := testUserStore.Create(ctx, newUser)
+	require.NoError(t, err)
+
+	targetHash := "target_secret_hash"
+	initSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: targetHash,
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	_, err = testSessionStore.Create(ctx, initSession)
+	require.NoError(t, err)
+
+	t.Run("tokenhashが存在しない", func(t *testing.T) {
+		wrongHash := "wrong_test_toke "
+		foundSession, err := testSessionStore.GetByHash(ctx, wrongHash)
+
+		assert.ErrorIs(t, err, errcode.ErrSessionNotFound)
+		assert.Nil(t, foundSession)
+	})
+	
+	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+		
+		tempSessionStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		unfoundSession, err := tempSessionStore.GetByHash(ctx, targetHash)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "セッション取得に失敗")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, unfoundSession)
+	})
+}
+
+func TestUpdateExpiredAt(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username:     "update_test_user",
+		Email:        "update_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initialSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: "initial_hash",
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	createdSession, err := testSessionStore.Create(ctx, initialSession)
+	require.NoError(t, err)
+
+	t.Run("正常に有効期限を更新できること", func(t *testing.T) {
+		newExpiry := time.Now().Add(48 * time.Hour).UTC()
+
+		err := testSessionStore.UpdateExpiresAt(ctx, newExpiry, createdSession.ID)
+
+		assert.NoError(t, err)
+
+		updatedSession, err := testSessionStore.GetByHash(ctx, "initial_hash")
+		require.NoError(t, err)
+		assert.WithinDuration(t, newExpiry, updatedSession.ExpiresAt, time.Second)
+	})
+}
+
+func TestUpdateExpiredAtWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username:     "update_test_user",
+		Email:        "update_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initialSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: "initial_hash",
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	createdSession, err := testSessionStore.Create(ctx, initialSession)
+	require.NoError(t, err)
+
+	t.Run("存在しないIDを指定した場合、ErrSessionNotFoundを返すこと", func(t *testing.T) {
+		nonExistentID := int64(999999)
+		newExpiry := time.Now().Add(24 * time.Hour).UTC()
+
+		err := testSessionStore.UpdateExpiresAt(ctx, newExpiry, nonExistentID)
+		assert.ErrorIs(t, err, errcode.ErrSessionNotFound)
+	})
+
+	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, _ := testutils.OpenDB(testContext.DSN)
+		tempStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		err := tempStore.UpdateExpiresAt(ctx, time.Now(), createdSession.ID)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "セッション期限の更新に失敗しました")
+		t.Logf("期待通りキャッチされたエラー: %v", err)
+	})
+}
+
+func TestDeleteByHash(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username:     "update_test_user",
+		Email:        "update_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+	hash := "initial_hash"
+	initialSession := &models.Session{
+		UserID:    createdUser.ID,
+		TokenHash: hash,
+		ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+	}
+	createdSession, err := testSessionStore.Create(ctx, initialSession)
+	require.NoError(t, err)
+	require.NotNil(t, createdSession)
+
+	t.Run("正常にハッシュで削除できること", func(t *testing.T) {
+	err = testSessionStore.DeleteByHash(ctx, hash)
+		require.NoError(t, err)
+		test, err := testSessionStore.GetByHash(ctx, hash)
+		require.ErrorIs(t, err, errcode.ErrSessionNotFound)
+		require.Nil(t, test)
+	})
+	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, _ := testutils.OpenDB(testContext.DSN)
+		tempStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		err := tempStore.DeleteByHash(ctx, hash)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "セッションの削除に失敗しました")
+		t.Logf("期待通りキャッチされたエラー: %v", err)
+	})
+
+	t.Run("存在しないトークンを指定した場合、ErrSessionNotFoundを返すこと", func(t *testing.T) {
+		wrongToken := "wrong_hash"
+		err := testSessionStore.DeleteByHash(ctx, wrongToken)
+		assert.ErrorIs(t, err, errcode.ErrSessionNotFound)
+	})
+}
+
+func TestDeleteAllByUserID(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	initUser := &models.User{
+		Username:     "update_test_user",
+		Email:        "update_test@example.com",
+		PasswordHash: "hashed_password",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+	hashList := []string{"token_hash_1", "token_hash_2", "token_hash_3"}
+	for i := range hashList {
+		initSession := &models.Session{
+			UserID: createdUser.ID,
+			TokenHash: hashList[i],
+			ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+		}
+		createdSession, err := testSessionStore.Create(ctx, initSession)
+		require.NoError(t, err)
+		require.NotNil(t, createdSession)
+	}
+
+	t.Run("正常にユーザーIDで削除できること", func(t *testing.T) {
+		err = testSessionStore.DeleteAllByUserID(ctx, createdUser.ID)
+		require.NoError(t, err)
+		for i := range hashList{
+			createdSession, err := testSessionStore.GetByHash(ctx, hashList[i])
+			require.ErrorIs(t, err, errcode.ErrSessionNotFound)
+			require.Nil(t, createdSession)
+		}
+	})
+
+	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, _ := testutils.OpenDB(testContext.DSN)
+		tempStore := NewPostgresSessionStore(tempDB)
+		tempDB.Close()
+
+		err := tempStore.DeleteAllByUserID(ctx, createdUser.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ユーザーの全セッション削除に失敗しました")
+		t.Logf("期待通りキャッチされたエラー: %v", err)
+	})
+}
+</file>
+
+<file path="internal/db/sql_session_store.go">
+package db
+
+import (
+	"aita/internal/models"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
+)
+
+type postgresSessionStore struct {
+	database *sqlx.DB
+}
+
+func NewPostgresSessionStore(db *sqlx.DB) *postgresSessionStore {
+	return &postgresSessionStore{database: db}
+}
+
+func (s *postgresSessionStore) Create(ctx context.Context, session *models.Session) (*models.Session, error) {
+	query := `INSERT INTO sessions(user_id, token_hash, expires_at) 
+              VALUES ($1, $2, $3)
+              RETURNING id, user_id, token_hash, expires_at, created_at`
+
+	var newSession models.Session
+	err := s.database.QueryRowContext(
+		ctx,
+		query,
+		session.UserID,
+		session.TokenHash,
+		session.ExpiresAt,
+	).Scan(
+		&newSession.ID,
+		&newSession.UserID,
+		&newSession.TokenHash,
+		&newSession.ExpiresAt,
+		&newSession.CreatedAt,
+	)
+
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			switch pqErr.Code {
+			case errCodeForeignKeyViolation:
+				if pqErr.Constraint == constraintSessionUserFK {
+					return nil, errcode.ErrUserNotFound
+				}
+			case errCodeUniqueViolation:
+				if pqErr.Constraint == constraintTokenHashUnique {
+					return nil, errcode.ErrTokenConflict
+				}
+			case errCodeStringDataRightTruncation:
+				return nil, errcode.ErrValueTooLong
+			}
+		}
+		return nil, fmt.Errorf("セッションの生成に失敗しました: %w", err)
+	}
+
+	newSession.ExpiresAt = newSession.ExpiresAt.UTC()
+	newSession.CreatedAt = newSession.CreatedAt.UTC()
+	return &newSession, nil
+}
+
+func (s *postgresSessionStore) GetByHash(ctx context.Context, tokenHash string) (*models.Session, error) {
+	query := `SELECT id, user_id, token_hash, expires_at, created_at FROM sessions WHERE token_hash = $1`
+
+	var newSession models.Session
+	err := s.database.GetContext(ctx, &newSession, query, tokenHash)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errcode.ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("tokenhashによるセッション取得に失敗しました: %w", err)
+	}
+
+	newSession.ExpiresAt = newSession.ExpiresAt.UTC()
+	newSession.CreatedAt = newSession.CreatedAt.UTC()
+	return &newSession, nil
+}
+
+func (s *postgresSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt time.Time, id int64) error {
+	query := `UPDATE sessions SET expires_at = $1 WHERE id = $2`
+
+	result, err := s.database.ExecContext(ctx, query, expiresAt, id)
+
+	if err != nil {
+		return fmt.Errorf("セッション期限の更新に失敗しました: %w", err)
+	}
+	
+	rows, err := result.RowsAffected()
+	if rows == 0 {
+		return errcode.ErrSessionNotFound
+	}
+
+	return nil
+}
+
+func (s *postgresSessionStore) DeleteByHash(ctx context.Context, tokenHash string) error {
+    query := `DELETE FROM sessions WHERE token_hash = $1`
+    result, err := s.database.ExecContext(ctx, query, tokenHash)
+    if err != nil {
+        return fmt.Errorf("セッションの削除に失敗しました: %w", err)
+    }
+
+    rows, _ := result.RowsAffected()
+    if rows == 0 {
+        return errcode.ErrSessionNotFound
+    }
+    return nil
+}
+
+func (s *postgresSessionStore) DeleteAllByUserID(ctx context.Context, userID int64) error {
+	query := ` DELETE FROM sessions WHERE user_id = $1`
+	_, err := s.database.ExecContext(ctx, query, userID)
+	if err != nil {
+		return fmt.Errorf("ユーザーの全セッション削除に失敗しました: %w", err)
+	}
+
+	return nil
+}
+</file>
+
+<file path="internal/models/validation.go">
+package models
+
+import (
+	"aita/internal/pkg/utils"
+	"strings"
+	"unicode/utf8"
+)
+
+func IsValidSignUpReq(req *SignupRequest) error {
+	if req.Username == "" || req.Email == "" || req.Password == "" {
+		return ErrRequiredFieldMissing
+	}
+	if len(req.Username) < 4 || len(req.Username) > 50 {
+		return ErrInvalidUsernameFormat
+	}
+	if len(req.Password) < 8 || len(req.Password) > 72 {
+		return ErrInvalidPasswordFormat
+	}
+	if !utils.IsValidEmail(req.Email) || len(req.Email) > 255 {
+		return ErrInvalidEmailFormat
+	}
+
+	return nil
+}
+
+func IsValidTweetReq(req *CreateTweetRequest) error {
+	if strings.TrimSpace(req.Content) == "" {
+		return ErrRequiredFieldMissing
+	}
+	if utf8.RuneCountInString(req.Content) > 1000 {
+		return ErrInvalidContentFormat
+	}
+	return nil
+}
+</file>
+
+<file path="internal/pkg/crypto/password.go">
+package crypto
+
+import "golang.org/x/crypto/bcrypt"
+
+
+
+type bcryptHasher struct {
+	cost int
+}
+
+func NewBcryptHasher(c int) *bcryptHasher {
+	return &bcryptHasher{cost: c}
+}
+
+func (b *bcryptHasher) Generate(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), b.cost)
+	if err != nil{
+		return "", err
+	}
+	return string(hash), nil
+}
+
+func (b *bcryptHasher) Compare(hashedPassword, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+}
+</file>
+
+<file path="internal/pkg/crypto/token.go">
+package crypto
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+)
+
+type tokenManager struct{}
+
+func NewTokenManager() *tokenManager {
+	return &tokenManager{}
+}
+
+func (m *tokenManager) Generate(length int) (string, error) {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+func (m *tokenManager) Hash(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return base64.URLEncoding.EncodeToString(hash[:])
+}
+</file>
+
+<file path="internal/pkg/testutils/test_helper.go">
+package testutils
+
+import "github.com/stretchr/testify/mock"
+
+func SafeGet[T any](args mock.Arguments, index int) *T {
+	val := args.Get(index)
+	if val == nil {
+		return nil
+	}
+	return val.(*T)
+}
+</file>
+
+<file path="internal/service/user_service_test.go">
+package service
+
+import (
+	"aita/internal/models"
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+)
+
+func TestRegister(t *testing.T) {
+    gin.SetMode(gin.TestMode)
+    tests := map[string]struct {
+        inputBody *dto.SignupRequest
+        setupMock func(mu *mockUserStore, mh *mockBcryptHasher)
+        wantedErr error
+        errMsg    string 
+    }{
+        "登録成功": {
+            inputBody: &dto.SignupRequest{
+                Username: "mock_user",
+                Email:    "mock@example.com",
+                Password: "password101",
+            },
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+                mh.On("Generate", "password101").Return("mock_hash", nil)
+                mu.On("Create", mock.Anything, mock.MatchedBy(func(user *models.User) bool {
+                    return user.Username == "mock_user" && user.Email == "mock@example.com" && user.PasswordHash == "mock_hash"
+                })).Return(&models.User{
+                    ID: 1, 
+                    Username: "mock_user", 
+                    Email: "mock@example.com", 
+                    PasswordHash: "mock_hash", 
+                    CreatedAt: time.Now().UTC(),
+                }, nil)},
+            wantedErr: nil,
+        },
+        "必須項目が不足": {
+            inputBody: &dto.SignupRequest{
+                Username: "mock_user",
+                Email:    "mock@example.com",
+                Password: "",
+            },
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+            wantedErr: errcode.ErrRequiredFieldMissing,
+        },
+        "ユーザー名形式が正しくない": {
+            inputBody: &dto.SignupRequest{
+                Username: "m",
+                Email:    "mock@example.com",
+                Password: "password101",
+            },
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+            wantedErr: errcode.ErrInvalidUsernameFormat,
+        },
+        "パスワード形式が正しくない": {
+            inputBody: &dto.SignupRequest{
+                Username: "mock_user",
+                Email:    "mock@example.com",
+                Password: "123",
+            },
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+            wantedErr: errcode.ErrInvalidPasswordFormat,
+        },
+        "メールアドレス形式が正しくない": {
+            inputBody: &dto.SignupRequest{
+                Username: "mock_user",
+                Email:    "mockxamplecom",
+                Password: "password101",
+            },
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+            wantedErr: errcode.ErrInvalidEmailFormat,
+        },
+        "パスワードをハッシュ化に失敗": {
+            inputBody: &dto.SignupRequest{
+                Username: "mock_user",
+                Email:    "mock@example.com",
+                Password: "password101",
+            },
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+                mh.On("Generate", "password101").Return("", errMockHashFailed)
+            },
+            wantedErr: errMockHashFailed,
+            errMsg: "パスワードをハッシュ化に失敗しました",
+        },
+        "データベース内部エラー": {
+            inputBody: &dto.SignupRequest{
+                Username: "mock_user",
+                Email:    "mock@example.com",
+                Password: "password101",
+            },
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+                mh.On("Generate", "password101").Return("mock_hash", nil)
+                mu.On("Create", mock.Anything, mock.MatchedBy(func(user *models.User) bool {
+                    return user.Username == "mock_user"
+                })).Return(nil, errMockInternal)
+            },
+            wantedErr: errMockInternal,
+            errMsg: "登録に失敗しました",
+        },
+    }
+
+    for name, tt := range tests {
+        t.Run(name, func(t *testing.T) {
+            mu := new(mockUserStore)
+            mh := new(mockBcryptHasher)
+            tt.setupMock(mu, mh)
+            svc := NewUserService(mu, mh)
+            ctx := context.Background()
+            res, err := svc.Register(ctx, tt.inputBody)
+
+            if tt.wantedErr != nil {
+                assert.ErrorIs(t, err, tt.wantedErr)
+                if tt.errMsg != "" {
+                    assert.Contains(t, err.Error(), tt.errMsg)
+                }
+                assert.Nil(t, res)
+            } else {
+                now := time.Now().UTC()
+                require.NoError(t, err)
+                require.NotNil(t, res)
+                assert.Equal(t, tt.inputBody.Username, res.Username)
+                assert.Equal(t, tt.inputBody.Email, res.Email)
+                assert.NotZero(t, res.ID)
+                assert.Equal(t, int64(1), res.ID)
+                assert.False(t, res.CreatedAt.IsZero())
+                assert.WithinDuration(t, now, res.CreatedAt, 10*time.Second)
+                assert.Equal(t, time.UTC, res.CreatedAt.Location())
+            }
+
+            mh.AssertExpectations(t)
+            mu.AssertExpectations(t)
+        })
+    }
+}
+
+func TestLogin(t *testing.T) {
+    gin.SetMode(gin.TestMode)
+    tests := map[string]struct {
+        email     string
+        password  string
+        setupMock func(mu *mockUserStore, mh *mockBcryptHasher)
+        wantedErr error
+        errMsg    string
+    }{
+        "ログイン成功": {
+            email:    "mock@example.com",
+            password: "password123",
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+                mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&models.User{
+                    ID: 1, Email: "mock@example.com", PasswordHash: "hashed_pass",
+                }, nil)
+                mh.On("Compare", "hashed_pass", "password123").Return(nil)
+            },
+            wantedErr: nil,
+        },
+        "必須項目が不足": {
+            email:     "mock@example.com",
+            password:  "",
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+            wantedErr: errcode.ErrRequiredFieldMissing,
+        },
+        "メールアドレス形式が正しくない": {
+            email:     "invalid-email",
+            password:  "password123",
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+            wantedErr: errcode.ErrInvalidEmailFormat,
+        },
+        "パスワード形式が正しくない": {
+            email:     "mock@example.com",
+            password:  "12", 
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+            wantedErr: errcode.ErrInvalidPasswordFormat,
+        },
+        "認証失敗(ユーザー不在)": {
+            email:    "none@example.com",
+            password: "password123",
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+                mu.On("GetByEmail", mock.Anything, "none@example.com").Return(nil, errcode.ErrUserNotFound)
+            },
+            wantedErr: errcode.ErrInvalidCredentials,
+        },
+        "認証失敗(DB接続失敗など)": {
+            email:    "test@example.com",
+            password: "password123",
+            setupMock: func(ms *mockUserStore, mh *mockBcryptHasher) {
+                ms.On("GetByEmail", mock.Anything, "test@example.com").Return(nil, errMockInternal)
+            },
+            wantedErr: errMockInternal,
+            errMsg: "ユーザー情報の取得に失敗しました",
+        },
+           "認証失敗(パスワード不一致)": {
+            email:    "mock@example.com",
+            password: "wrong-password",
+            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+                mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&models.User{
+                    PasswordHash: "correct_hash",
+                }, nil)
+                mh.On("Compare", "correct_hash", "wrong-password").Return(fmt.Errorf("hash mismatch"))
+            },
+            wantedErr: errcode.ErrInvalidCredentials,
+        },
+    }
+     
+
+    for name, tt := range tests {
+        t.Run(name, func(t *testing.T) {
+            mu := new(mockUserStore)
+            mh := new(mockBcryptHasher)
+            tt.setupMock(mu, mh)
+            
+            svc := NewUserService(mu, mh)
+            ctx := context.Background()
+            res, err := svc.Login(ctx, tt.email, tt.password)
+
+            if tt.wantedErr != nil {
+                assert.ErrorIs(t, err, tt.wantedErr)
+                if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+                assert.Nil(t, res)
+            } else {
+                require.NoError(t, err)
+                require.NotNil(t, res)
+                assert.Equal(t, tt.email, res.Email)
+            }
+            mu.AssertExpectations(t)
+            mh.AssertExpectations(t)
+        })
+    }
+}
+
+func TestToMyPage(t *testing.T) {
+    tests := map[string]struct {
+        userID    int64
+        setupMock func(mu *mockUserStore)
+        wantedErr error
+        errMsg    string 
+    }{
+        "取得成功": {
+            userID: 1,
+            setupMock: func(mu *mockUserStore) {
+                mu.On("GetByID", mock.Anything, int64(1)).Return(&models.User{ID: 1}, nil)
+            },
+            wantedErr: nil,
+        },
+        "ユーザーID無効": {
+            userID: -1,
+            setupMock: func(mu *mockUserStore) {},
+            wantedErr: errcode.ErrInvalidUserID,
+        },
+        "データベース内部エラー": {
+            userID: 1,
+            setupMock: func(mu *mockUserStore) {
+                mu.On("GetByID", mock.Anything, int64(1)).Return(nil, errMockInternal)
+            },
+            wantedErr: errMockInternal,
+            errMsg: "ユーザー情報の取得に失敗しました",
+        },
+    }
+    
+    for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			mu := new(mockUserStore)
+			mh := new(mockBcryptHasher)
+			tt.setupMock(mu)
+
+			svc := NewUserService(mu, mh)
+			res, err := svc.ToMyPage(context.Background(), tt.userID)
+
+			if tt.wantedErr != nil {
+				assert.ErrorIs(t, err, tt.wantedErr)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+				assert.Nil(t, res)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				assert.Equal(t, tt.userID, res.ID)
+			}
+
+			mu.AssertExpectations(t)
+		})
+	}
+}
+</file>
+
+<file path="migrations/000001_create_initial_tables.down.sql">
+DROP TABLE IF EXISTS "sessions";
+DROP TABLE IF EXISTS "tweets";
+DROP TABLE IF EXISTS "users";
+</file>
+
+<file path="migrations/000002_add_created_at_to_sessions.down.sql">
+ALTER TABLE sessions 
+DROP COLUMN IF EXISTS created_at;
+</file>
+
+<file path="migrations/000002_add_created_at_to_sessions.up.sql">
+ALTER TABLE sessions
+ADD COLUMN created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP;
+</file>
+
+<file path="migrations/000003_add_content_limit_to_tweets.down.sql">
+ALTER TABLE "tweets" ALTER COLUMN "content" TYPE text;
+</file>
+
+<file path="migrations/000003_add_content_limit_to_tweets.up.sql">
+ALTER TABLE "tweets" ALTER COLUMN "content" TYPE varchar(1000);
+</file>
+
+<file path="scripts/init-db/init.sql">
+CREATE DATABASE aita_test_db;
+</file>
+
+<file path=".gitignore">
+/aita
+/cmd/api/api    
+*.exe         
+*.test 
+
+
+.env
+
+vendor/
+
+.vscode/        
+.idea/          
+.DS_Store       
+Thumbs.db       
+go
+go.sum.bak
+</file>
+
+<file path="internal/api/tweet_create_test.go">
+package api
+
+import (
+	"aita/internal/contextkeys"
+	"aita/internal/models"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+)
+
+func TestTweetCreate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+    tests := []struct {
+        name           string
+        requestBody    any
+        setupAuth      func(c *gin.Context)
+        setupMock      func(mt *mockTweetService)
+        expectedStatus int
+        checkResponse  func(t *testing.T, w *httptest.ResponseRecorder)
+    }{
+        {
+            name:        "ツイート投稿成功",
+            requestBody: dto.CreateTweetRequest{Content: "AITAの初投稿!"},
+            setupAuth: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, int64(10))
+            },
+            setupMock: func(mt *mockTweetService) {
+                expectedTweet := &models.Tweet{
+                    ID: 100, 
+                    Content: "AITAの初投稿!", 
+                    UserID: 10,
+                    CreatedAt: time.Now(),
+                }
+                mt.On("PostTweet", mock.Anything, int64(10), mock.Anything).Return(expectedTweet, nil)
+            },
+            expectedStatus: http.StatusCreated,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                fmt.Println("Raw Response:", w.Body.String())
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                data := resp.Data.(map[string]any)
+                assert.Equal(t, float64(100), data["id"]) 
+                assert.Equal(t, "AITAの初投稿!", data["content"])
+            },
+        },
+        {
+            name:        "JSON構文エラー",
+            requestBody: `{"content": "incomplete...`,
+            setupAuth: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, int64(10))
+            },
+            setupMock:      func(mt *mockTweetService) {},
+            expectedStatus: http.StatusBadRequest,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
+            },
+        },
+        {
+            name:        "バリデーションエラー：内容が空",
+            requestBody: dto.CreateTweetRequest{Content: ""},
+            setupAuth: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, int64(10))
+            },
+            setupMock: func(mt *mockTweetService) {
+                mt.On("PostTweet", mock.Anything, int64(10), mock.Anything).Return(nil, errcode.ErrRequiredFieldMissing)
+            },
+            expectedStatus: http.StatusBadRequest,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                assert.Equal(t, "REQUIRED_FIELD_MISSING", resp.Code)
+            },
+        },
+        {
+            name:        "未認証エラー：ContextにIDがない",
+            requestBody: dto.CreateTweetRequest{Content: "Hello"},
+            setupAuth:   func(c *gin.Context) {}, 
+            setupMock:   func(mt *mockTweetService) {},
+            expectedStatus: http.StatusUnauthorized,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                assert.Equal(t, "SESSION_NOT_FOUND", resp.Code)
+            },
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mt := new(mockTweetService)
+            h := NewTweetHandler(mt)
+            tt.setupMock(mt)
+            w := httptest.NewRecorder()
+            c, _ := gin.CreateTestContext(w)
+
+            var buf bytes.Buffer
+            if s, ok := tt.requestBody.(string); ok {
+                buf.WriteString(s)
+            } else {
+                json.NewEncoder(&buf).Encode(tt.requestBody)
+            }
+            c.Request = httptest.NewRequest(http.MethodPost, "/tweets", &buf)
+
+            tt.setupAuth(c)
+            h.Create(c)
+            assert.Equal(t, tt.expectedStatus, w.Code)
+            if tt.checkResponse != nil {
+                tt.checkResponse(t, w)
+            }
+        })
+    }
+}
+</file>
+
+<file path="internal/config/config.go">
+package config
+
+import (
+	"log"
+	"os"
+	"path/filepath"
+	"runtime"
+
+	"github.com/joho/godotenv"
+)
+
+var projectRoot string
+
+func init() {
+	_, b, _, _ := runtime.Caller(0)
+	projectRoot = filepath.Join(filepath.Dir(b), "..", "..")
+}
+
+func GetPath(relPath string) string {
+	return filepath.Join(projectRoot, relPath)
+}
+
+type Config struct{
+	DBConnStr        string
+	ServerAddress    string
+}
+
+func LoadConfig() *Config{
+	envPath := GetPath(".env")
+	if err := godotenv.Load(envPath); err != nil {
+		log.Fatal("エラー :.envが見つかりません")
+	}
+	dbURL := os.Getenv("DB_URL")
+	if os.Getenv("APP_ENV") == "test" {
+        dbURL = os.Getenv("DB_TEST_URL")
+		log.Println("DB_TEST_URLに切り替えます")
+    }
+
+	if dbURL == "" {
+		log.Fatal("エラー：環境変数 DB_URL が設定されていません")
+	}
+	return &Config{
+		DBConnStr:       dbURL,
+		ServerAddress:   ":8080",
+	}
+}
+</file>
+
+<file path="internal/db/tweet_store.go">
+package db
+
+import (
+	"aita/internal/models"
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
+)
+
+type postgresTweetStore struct {
+	database *sqlx.DB
+}
+
+func NewPostgresTweetStore(DB *sqlx.DB) *postgresTweetStore {
+	return &postgresTweetStore{database: DB}
+}
+
+func (s *postgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Tweet) (*models.Tweet, error) {
+	query := `
+		INSERT INTO tweets(user_id, content, image_url)
+		VALUES($1, $2, $3)
+		RETURNING id, user_id, content, image_url, created_at`
+	var newTweet models.Tweet
+	err := s.database.QueryRowContext(
+		ctx,
+		query,
+		tweet.UserID,
+		tweet.Content,
+		tweet.ImageURL,
+	).Scan(
+		&newTweet.ID, 
+		&newTweet.UserID,
+		&newTweet.Content,
+		&newTweet.ImageURL,
+		&newTweet.CreatedAt,
+	)
+	
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			if pqErr.Code == errCodeForeignKeyViolation && pqErr.Constraint == constraintTweetUserFK {
+                return nil, errcode.ErrUserNotFound
+            }
+			if pqErr.Code == errCodeStringDataRightTruncation {
+				return nil, errcode.ErrValueTooLong
+			}
+		}
+		
+		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
+	}
+
+	newTweet.CreatedAt = newTweet.CreatedAt.UTC()
+	return &newTweet, nil
+}
+
+func (s *postgresTweetStore) UpdateContent(ctx context.Context, tweetID int64, newContent string) error {
+	query := `UPDATE tweets SET content = $1, created_at = NOW() WHERE id = $2 && user_id = $3`
+}
+func (s *postgresTweetStore) DeleteTweet(ctx context.Context, tweetID int64, userID int64) error
+</file>
+
+<file path="internal/models/error.go">
+package models
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+
+	"github.com/go-playground/validator/v10"
+)
+
+var (
+    ErrInvalidRequestFormat   = errors.New("リクエスト形式が正しくありません")
+    ErrInvalidJSON            = errors.New("JSONの構文が正しくありません")
+
+	ErrRequiredFieldMissing   = errors.New("必要な項目が不足しています")
+	ErrInvalidUsernameFormat  = errors.New("ユーザーネームの形式が正しくありません(4〜50文字)")
+    ErrInvalidEmailFormat     = errors.New("有効なメールアドレスを入力してください(最大255文字)")
+    ErrInvalidPasswordFormat  = errors.New("パスワードの形式が正しくありません(8〜72文字)")
+	ErrInvalidUserID          = errors.New("無効なユーザーIDです")
+    ErrInvalidTokenFormat     = errors.New("有効トークンを入力してください(最大255文字)")
+	ErrInvalidUrlFormat       = errors.New("Will be written")
+    ErrInvalidContentFormat   = errors.New("contentの形式が正しくありません(最大1000文字)")
+	
+    ErrValueTooLong           = errors.New("入力内容が長すぎます")
+
+	ErrUserNotFound           = errors.New("ユーザーデータが存在しません")
+	ErrSessionNotFound        = errors.New("セッションが見つかりません")
+	
+	ErrSessionExpired         = errors.New("セッションが期限切れです")
+	ErrUsernameConflict       = errors.New("ユーザーネームは既に使用されています")
+	ErrEmailConflict          = errors.New("メールのアドレスは既に使用されています")
+	ErrTokenConflict          = errors.New("トークンは既に存在します")
+	
+	ErrInvalidCredentials     = errors.New("メールアドレスまたはパスワードが正しくありません")
+)
+
+
+func FilterBindError(err error) error {
+    if err == nil {
+        return nil
+    }
+
+    if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+        return ErrInvalidJSON
+    }
+
+    var se *json.SyntaxError
+    var ute *json.UnmarshalTypeError
+    if errors.As(err, &se) || errors.As(err, &ute) {
+        return ErrInvalidJSON
+    }
+
+    var ve validator.ValidationErrors
+    if errors.As(err, &ve) {
+        return ErrInvalidRequestFormat
+    }
+    
+    return ErrInvalidJSON 
+}
+
+func GetStatusCode(err error) int {
+    if err == nil {
+        return 200 
+    }
+
+    if errors.Is(err, ErrInvalidCredentials) || 
+       errors.Is(err, ErrSessionExpired) || 
+       errors.Is(err, ErrSessionNotFound) {
+        return 401
+    }
+
+    if errors.Is(err, ErrUserNotFound) {
+        return 404
+    }
+
+    if errors.Is(err, ErrUsernameConflict) || 
+       errors.Is(err, ErrEmailConflict) || 
+       errors.Is(err, ErrTokenConflict) {
+        return 409
+    }
+
+    if errors.Is(err, ErrRequiredFieldMissing) ||
+       errors.Is(err, ErrInvalidUsernameFormat) ||
+       errors.Is(err, ErrInvalidEmailFormat) ||
+       errors.Is(err, ErrInvalidPasswordFormat) ||
+       errors.Is(err, ErrInvalidUserID) ||
+       errors.Is(err, ErrInvalidTokenFormat) ||
+       errors.Is(err, ErrInvalidUrlFormat) ||
+       errors.Is(err, ErrInvalidContentFormat ) ||
+       errors.Is(err, ErrValueTooLong) ||
+       errors.Is(err, ErrInvalidJSON) || 
+       errors.Is(err, ErrInvalidRequestFormat) {
+        return 400
+    }
+
+    return 500
+}
+
+func GetBusinessCode(err error) string {
+    if err == nil {
+        return ""
+    }
+
+    switch {
+    case errors.Is(err, ErrInvalidJSON):
+        return "INVALID_JSON_FORMAT"
+    case errors.Is(err, ErrInvalidRequestFormat):
+        return "INVALID_REQUEST_FORMAT"
+    case errors.Is(err, ErrRequiredFieldMissing):
+        return "REQUIRED_FIELD_MISSING"
+    case errors.Is(err, ErrInvalidUsernameFormat):
+        return "INVALID_USERNAME_FORMAT"
+    case errors.Is(err, ErrInvalidEmailFormat):
+        return "INVALID_EMAIL_FORMAT"
+    case errors.Is(err, ErrInvalidTokenFormat):
+        return "INVALID_TOKEN_FORMAT"
+    case errors.Is(err, ErrInvalidPasswordFormat):
+        return "INVALID_PASSWORD_FORMAT"
+    case errors.Is(err, ErrInvalidUserID):
+        return "INVALID_USER_ID"
+    case errors.Is(err, ErrInvalidUrlFormat):
+        return "INVALID_URL_FORMAT"
+    case errors.Is(err, ErrInvalidContentFormat) :
+        return "INVALID_CONTENT_FORMAT"
+    case errors.Is(err, ErrValueTooLong):
+        return "VALUE_TOO_LONG"
+
+    case errors.Is(err, ErrInvalidCredentials):
+        return "INVALID_CREDENTIALS"
+    case errors.Is(err, ErrSessionExpired):
+        return "SESSION_EXPIRED"
+    case errors.Is(err, ErrSessionNotFound):
+        return "SESSION_NOT_FOUND"
+
+    case errors.Is(err, ErrUserNotFound):
+        return "USER_NOT_FOUND"
+
+    case errors.Is(err, ErrUsernameConflict):
+        return "USERNAME_CONFLICT"
+    case errors.Is(err, ErrEmailConflict):
+        return "EMAIL_CONFLICT"
+    case errors.Is(err, ErrTokenConflict):
+        return "TOKEN_CONFLICT"
+
+    default:
+        return "INTERNAL_SERVER_ERROR"
+    }
+}
+</file>
+
+<file path="internal/models/response.go">
+package models
+
+type Response struct {
+    Data    any    `json:"data,omitempty"`  
+    Message string `json:"message,omitempty"`  
+    Error   string `json:"error,omitempty"`   
+    Code    string `json:"code,omitempty"`    
+    Meta    any    `json:"meta,omitempty"`    
+}
+
+func Fail(err error) Response {
+    return Response{
+        Error: err.Error(),
+        Code: GetBusinessCode(err),
+    }
+}
+
+func Success(data any) Response {
+    return Response{
+        Data: data,
+    }
+}
+
+func SuccessMsg(msg string) Response{
+    return Response{
+        Message: msg,
+    }
+}
+
+func SuccessWithMeta(data any, meta any) Response {
+    return Response{
+        Data: data,
+        Meta: meta,
+    }
+}
+</file>
+
+<file path="internal/pkg/utils/helper.go">
+package utils
+
+import "regexp"
+
+ func StringPtr(s string) *string {
+ 	if s == "" {
+ 		return nil
+ 	}
+ 	return &s
+}
+
+var emailRegex = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$`)
+func IsValidEmail(s string) bool {
+	if len(s) < 3 || len(s) > 255 {
+		return false
+	}
+	return emailRegex.MatchString(s)
+}
+</file>
+
+<file path="internal/service/session_service_test.go">
+package service
+
+import (
+	"aita/internal/models"
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+)
+
+func TestIssue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := map[string]struct {
+		userID    int64
+		setupMock func(ms *mockSessionStore, mt *mockTokenManager)
+		wantedErr error
+		errMsg    string
+	}{
+		"発行成功": {
+			userID: 1,
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+				rawToken := "generated_raw_token_32_characters_long"
+				hashedToken := "hashed_token"
+
+				mt.On("Generate", 32).Return(rawToken, nil)
+				mt.On("Hash", rawToken).Return(hashedToken)
+				expectedSession := &models.Session{
+						ID: 1,
+           				UserID: 1,
+            			TokenHash: hashedToken,
+            			CreatedAt: time.Now().UTC(),
+            			ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+				}
+
+				ms.On("Create", mock.Anything, mock.MatchedBy(func(s *models.Session) bool {
+					return s.UserID == 1 && s.TokenHash == hashedToken
+				})).Return(expectedSession, nil)
+			},
+			wantedErr: nil,
+		},
+		"バリデーションエラー": {
+			userID:    0,
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+			wantedErr: errcode.ErrRequiredFieldMissing,
+		},
+		"トークン生成失敗": {
+			userID: 1,
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+				mt.On("Generate", 32).Return("", errMockTokenFailed)
+			},
+			wantedErr: errMockTokenFailed,
+			errMsg:    "トークンの生成に失敗しました",
+		},
+		"DB保存失敗": {
+			userID: 1,
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+				mt.On("Generate", 32).Return("token", nil)
+				mt.On("Hash", "token").Return("hash")
+				ms.On("Create", mock.Anything, mock.Anything).Return(nil, errMockInternal)
+			},
+			wantedErr: errMockInternal,
+			errMsg:    "発行に失敗しました",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ms := new(mockSessionStore)
+			mu := new(mockUserService)
+			mt := new(mockTokenManager)
+
+			tt.setupMock(ms, mt)
+
+			svc := NewSessionService(ms, mu, mt)
+			res, err := svc.Issue(context.Background(), tt.userID)
+
+			if tt.wantedErr != nil {
+				assert.ErrorIs(t, err, tt.wantedErr)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+				assert.Nil(t, res)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.userID, res.Session.UserID)
+				assert.Equal(t, "generated_raw_token_32_characters_long", res.Token)
+				assert.Equal(t, int64(1), res.Session.ID)
+			}
+
+			ms.AssertExpectations(t)
+			mt.AssertExpectations(t)
+		})
+	}
+}
+
+func TestAuthenticate(t *testing.T) {
+	type testCase struct {
+		name      string
+		token     string
+		setupMock func(ms *mockSessionStore, mt *mockTokenManager)
+		wantedErr error
+		errMsg    string
+	}
+	tests := []testCase{
+		{
+			name:  "認証成功",
+			token: "valid_token_that_is_long_enough_32char",
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+				tokenHash := "hashed_token"
+				mt.On("Hash", mock.Anything).Return(tokenHash)
+				ms.On("GetByHash", mock.Anything, tokenHash).Return(&models.Session{
+					ID:        1,
+					UserID:    10,
+					TokenHash: "hashed_token",
+					ExpiresAt: time.Now().Add(24* time.Hour).UTC(),
+					CreatedAt: time.Now().UTC(),
+				}, nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:      "Tokenが空",
+			token:     "",
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+			wantedErr: errcode.ErrRequiredFieldMissing,
+		},
+		{
+			name:      "Tokenが短すぎる",
+			token:     "too_short",
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+			wantedErr: errcode.ErrInvalidTokenFormat,
+		},
+		{
+			name: "Tokenが長すぎる",
+			token: strings.Repeat("a", 256),
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+			wantedErr: errcode.ErrInvalidTokenFormat,
+		},
+		{
+			name:  "セッションが見つからない",
+			token: "unknown_token_long_enough_32char",
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+				mt.On("Hash", mock.Anything).Return("unknown_hash")
+				ms.On("GetByHash", mock.Anything, "unknown_hash").Return(nil, errMockTokenFailed)
+			},
+			wantedErr: errMockTokenFailed,
+			errMsg:    "セッションの取得に失敗しました",
+		},
+		{
+			name:  "DB内部エラー",
+			token: "valid_token_that_is_long_enough_32char",
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+				mt.On("Hash", mock.Anything).Return("hash")
+				ms.On("GetByHash", mock.Anything, "hash").Return(nil, errMockTokenFailed)
+			},
+			wantedErr: errMockTokenFailed,
+			errMsg:    "セッションの取得に失敗しました",
+		},
+		{
+			name: "期限切れ",
+			token: "valid_token_that_is_long_enough_32char",
+			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+				tokenHash := "hashed_token"
+				mt.On("Hash", mock.Anything).Return(tokenHash)
+				ms.On("GetByHash", mock.Anything, tokenHash).Return(&models.Session{
+					ID:        1,
+					UserID:    10,
+					TokenHash: "hashed_token",
+					ExpiresAt: time.Now().Add(-1 * time.Hour).UTC(),
+					CreatedAt: time.Now().UTC(),
+				}, nil)
+			},
+			wantedErr: errcode.ErrSessionExpired,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ms := new(mockSessionStore)
+			mt := new(mockTokenManager)
+			mu := new(mockUserService)
+
+			tt.setupMock(ms, mt)
+
+			svc := NewSessionService(ms, mu, mt)
+			res, err := svc.authenticate(context.Background(), tt.token)
+
+			if tt.wantedErr != nil {
+				assert.ErrorIs(t, err, tt.wantedErr)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+				assert.Nil(t, res)
+			} else if tt.errMsg != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				require.NoError(t, err)
+				assert.NotNil(t, res)
+				assert.Equal(t, int64(10), res.UserID)
+			}
+
+			ms.AssertExpectations(t)
+			mt.AssertExpectations(t)
+		})
+	}
+}
+
+func TestValidate(t *testing.T) {
+	type testCase struct {
+		name      string
+		token     string
+		setupMock func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager)
+		wantedErr error
+		errMsg    string
+	}
+
+	validToken := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
+	tests := []testCase{
+		{
+			name:      "トークンが完全に空",
+			token:     "",
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {},
+			wantedErr: errcode.ErrRequiredFieldMissing,
+		},
+		{
+			name:      "フォーマット不正",
+			token:     "Bearer" + validToken, 
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {},
+			wantedErr: errcode.ErrInvalidTokenFormat,
+		},
+		{
+			name:      "プレフィックスがBearerではない",
+			token:     "Basic " + validToken,
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {},
+			wantedErr: errcode.ErrInvalidTokenFormat,
+		},
+		{
+			name:      "Bearerヘッダーのみで内容が空",
+			token:     "Bearer ",
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+			},
+			wantedErr: errcode.ErrRequiredFieldMissing,
+		},
+		{
+			name:      "トークン長が不足",
+			token:     "Bearer short_token",
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+			},
+			wantedErr: errcode.ErrInvalidTokenFormat,
+		},
+		{
+			name:  "データベース内部エラー",
+			token: "Bearer " + validToken,
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+				mt.On("Hash", validToken).Return("hashed_ok")
+				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(nil, errMockInternal)
+			},
+			wantedErr: errMockInternal,
+			errMsg: "セッションの取得に失敗しました",
+		},
+		{
+			name:  "【成功】標準的なBearer認証",
+			token: "Bearer " + validToken,
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+				mt.On("Hash", validToken).Return("hashed_ok")
+				session := &models.Session{
+					ID: 1, 
+					UserID: 10, 
+					TokenHash: "hashed_ok",
+					ExpiresAt: time.Now().Add(23 * time.Hour).UTC(),
+					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
+				}
+				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
+				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:  "【成功】Bearerの大小文字を区別しない",
+			token: "bEaReR " + validToken,
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+				mt.On("Hash", validToken).Return("hashed_ok")
+				session := &models.Session{
+					ID: 1,
+					UserID: 10, 
+					TokenHash: "hashed_ok",
+					ExpiresAt: time.Now().Add(23 * time.Hour).UTC(),
+					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
+				}
+				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
+				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:  "【成功】セッションの自動更新がトリガーされる",
+			token: "Bearer " + validToken,
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+				mt.On("Hash", validToken).Return("hashed_ok")
+				oldExpiry := time.Now().Add(1 * time.Hour).UTC()
+				session := &models.Session{
+					ID: 1, 
+					UserID: 10, 
+					TokenHash: "hashed_ok",
+					ExpiresAt: oldExpiry,
+					CreatedAt: time.Now().Add(-23 * time.Hour).UTC(),
+				}
+				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
+				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
+				ms.On("UpdateExpiresAt", mock.Anything, mock.MatchedBy(func(t time.Time) bool {
+            		expected := time.Now().Add(models.SessionDuration).UTC()
+           			 return t.After(oldExpiry) && t.Sub(expected).Abs() < 10*time.Second
+        		}), int64(1)).Return(nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:  "【失敗】セッションは有効だがユーザーが存在しない（退会済みなど）",
+			token: "Bearer " + validToken,
+			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+				mt.On("Hash", validToken).Return("hashed_ok")
+				session := &models.Session{
+					ID: 1,
+					UserID: 10, 
+					TokenHash: "hashed_ok",
+					ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
+				}
+				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
+				mu.On("ToMyPage", mock.Anything, int64(10)).Return(nil, errcode.ErrUserNotFound)
+			},
+			wantedErr: errcode.ErrUserNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ms := new(mockSessionStore)
+			mt := new(mockTokenManager)
+			mu := new(mockUserService)
+
+			tt.setupMock(ms, mu, mt)
+			svc := NewSessionService(ms, mu, mt)
+
+			res, err := svc.Validate(context.Background(), tt.token)
+
+			if tt.wantedErr != nil {
+				assert.ErrorIs(t, err, tt.wantedErr)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+				assert.Nil(t, res)
+			} else {
+				if tt.name == "【成功】セッションの自動更新がトリガーされ、正しく更新されること" {
+    			require.NoError(t, err)	
+    				expectedNewExpiry := time.Now().Add(models.SessionDuration).UTC()
+    				assert.WithinDuration(t, expectedNewExpiry, res.ExpiresAt, 10*time.Second)
+    				assert.True(t, res.ExpiresAt.After(time.Now().Add(22*time.Hour))) 
+				}
+				require.NoError(t, err)
+				assert.NotNil(t, res)
+			}
+
+			ms.AssertExpectations(t)
+			mt.AssertExpectations(t)
+			mu.AssertExpectations(t)
+		})
+	}
+}
+
+func TestRefreshSession(t *testing.T) {
+	initialExpiry := time.Now().Add(-1 * time.Hour).UTC()
+	session := &models.Session{
+		ID:        1,
+		UserID:    10,
+		ExpiresAt: initialExpiry,
+	}
+
+	tests := []struct {
+		name      string
+		setupMock func(ms *mockSessionStore)
+		wantErr   bool
+		errMsg    string
+	}{
+		{
+			name: "セッション期限が正常に更新される",
+			setupMock: func(ms *mockSessionStore) {
+				ms.On("UpdateExpiresAt", mock.Anything, mock.AnythingOfType("time.Time"), int64(1)).
+					Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "データベース更新エラー",
+			setupMock: func(ms *mockSessionStore) {
+				ms.On("UpdateExpiresAt", mock.Anything, mock.Anything, int64(1)).
+					Return(errMockInternal)
+			},
+			wantErr: true,
+			errMsg:  "セッション期限の更新に失敗しました",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ms := new(mockSessionStore)
+			mt := new(mockTokenManager)
+			mu := new(mockUserService)
+			
+			tt.setupMock(ms)
+			svc := NewSessionService(ms, mu, mt)
+
+			err := svc.refreshSession(context.Background(), session)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+				assert.True(t, session.ExpiresAt.After(initialExpiry), "ExpiresAt が更新後の方が新しくなっているべき")
+				expectedExpiry := time.Now().Add(models.SessionDuration)
+				assert.WithinDuration(t, expectedExpiry, session.ExpiresAt, 10*time.Second)
+			}
+
+			ms.AssertExpectations(t)
+		})
+	}
+}
+
+func TestRevoke(t *testing.T) {
+    type testCase struct {
+        name           string
+        header         string 
+        setupMock      func(ms *mockSessionStore, mt *mockTokenManager)
+        wantedErr      error
+        expectContains string
+    }
+
+    validToken := "valid_token_that_is_long_enough_32char"
+    validHeader := "Bearer " + validToken
+
+    tests := []testCase{
+        {
+            name:   "正常にログアウトできる(正規のBearerヘッダー)",
+            header: validHeader,
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+                mt.On("Hash", validToken).Return("token_hash")
+                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(nil)
+            },
+        },
+        {
+            name:      "ヘッダーが空",
+            header:    "",
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+            wantedErr: errcode.ErrSessionNotFound,
+        },
+        {
+            name:      "Bearerプレフィックスがない",
+            header:    validToken, 
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+            wantedErr: errcode.ErrSessionNotFound,
+        },
+        {
+            name:      "Bearerの綴りがおかしい",
+            header:    "Beareeee " + validToken,
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+            wantedErr: errcode.ErrSessionNotFound,
+        },
+        {
+            name:   "大文字のBEARERでも認識されること",
+            header: "BEARER " + validToken,
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+                mt.On("Hash", validToken).Return("token_hash")
+                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(nil)
+            },
+        },
+		{
+            name:      "tokenが空(Bearerのみ)",
+            header:    "Bearer ",
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+            wantedErr: errcode.ErrSessionNotFound,
+        },
+		{
+    		name:   "tokenが31文字(短すぎる)",
+    		header: "Bearer " + strings.Repeat("a", 31),
+    		setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+    		wantedErr: errcode.ErrSessionNotFound,
+		},
+		{
+		    name:   "tokenが256文字(長すぎる)",
+    		header: "Bearer " + strings.Repeat("a", 256),
+   		    setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+    		wantedErr: errcode.ErrSessionNotFound,
+		},
+		{
+    		name:   "tokenがちょうど32文字(境界値・成功)",
+    		header: "Bearer " + strings.Repeat("a", 32),
+    		setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+       			mt.On("Hash", strings.Repeat("a", 32)).Return("hash_32")
+        		ms.On("DeleteByHash", mock.Anything, "hash_32").Return(nil)
+    		},
+    		wantedErr: nil,
+		},
+        {
+            name:   "DBエラー時にラップされたエラーを返す",
+            header: validHeader,
+            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+                mt.On("Hash", validToken).Return("token_hash")
+                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(errMockInternal)
+            },
+            wantedErr:      errMockInternal,
+            expectContains: "セッションの削除に失敗しました",
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            ms := new(mockSessionStore)
+            mt := new(mockTokenManager)
+            mu := new(mockUserService)
+            svc := NewSessionService(ms, mu, mt)
+
+            tt.setupMock(ms, mt)
+
+            err := svc.Revoke(context.Background(), tt.header)
+
+            if tt.wantedErr != nil {
+                assert.ErrorIs(t, err, tt.wantedErr)
+                if tt.expectContains != "" {
+                    assert.Contains(t, err.Error(), tt.expectContains)
+                }
+            } else {
+                assert.NoError(t, err)
+            }
+            ms.AssertExpectations(t)
+            mt.AssertExpectations(t)
+        })
+    }
+}
+</file>
+
+<file path="internal/service/session_service.go">
+package service
+
+import (
+	"aita/internal/models"
+	"context"
+	"fmt"
+	"strings"
+	"time"
+)
+
+type SessionStore interface {
+	Create(ctx context.Context, session *models.Session) (*models.Session, error)
+	GetByHash(ctx context.Context, tokenHash string) (*models.Session, error)
+	UpdateExpiresAt(ctx context.Context, expiresAt time.Time, id int64) error
+    DeleteByHash(ctx context.Context, tokenHash string) error 
+}
+
+type UserInfoProvider interface {
+    ToMyPage(ctx context.Context, userID int64) (*models.User, error)
+}
+
+type TokenManager interface {
+    Generate(length int) (string, error)
+    Hash(token string) string
+}
+
+
+type sessionService struct {
+    sessionStore SessionStore
+    userService  UserInfoProvider
+    tokenManager TokenManager
+}
+
+func NewSessionService(ss SessionStore, usvc UserInfoProvider, tm TokenManager) *sessionService {
+    return &sessionService{
+        sessionStore: ss,
+        userService: usvc,
+        tokenManager: tm,
+    }
+} 
+
+func (s *sessionService) validateAndHash(token string) (string, error) {
+    if token == "" || len(token) < 32 || len(token) > 255 {
+        return "", errcode.ErrSessionNotFound
+    }
+    return s.tokenManager.Hash(token), nil
+}
+
+func (h *sessionService) extractBearerToken(header string) string {
+    if header == "" {
+        return ""
+    }
+    parts := strings.SplitN(header, " ", 2)
+    if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+        return strings.TrimSpace(parts[1])
+    }
+    return ""
+}
+
+func (s *sessionService) Issue(ctx context.Context, userID int64) (*models.IssueResponse, error) {
+    if userID <= 0 {
+        return nil, errcode.ErrRequiredFieldMissing
+    }
+
+    token, err := s.tokenManager.Generate(32)
+    if err != nil {
+        return nil, fmt.Errorf("トークンの生成に失敗しました: %w", err)
+    }
+
+    sessionData := &models.Session{
+        UserID:    userID,
+        TokenHash: s.tokenManager.Hash(token),
+        ExpiresAt: time.Now().Add(24 * time.Hour).UTC(), 
+    }
+
+    session, err := s.sessionStore.Create(ctx, sessionData)
+    if err != nil {
+        return nil, fmt.Errorf("発行に失敗しました: %w", err)
+    }
+    
+    return &models.IssueResponse{
+        Session: session,
+        Token: token,
+    }, nil
+}
+
+func (s *sessionService) authenticate(ctx context.Context, token string) (*models.Session, error) {
+    tokenHash, err := s.validateAndHash(token)
+    if err != nil {
+        return nil, err
+    }
+    session, err := s.sessionStore.GetByHash(ctx, tokenHash)
+    if err != nil {
+        return nil, fmt.Errorf("セッションの取得に失敗しました: %w", err)
+    }
+
+    if session.IsExpired() {
+        return nil, errcode.ErrSessionExpired
+    }
+    return session, nil
+}
+
+func (s *sessionService) Validate(ctx context.Context, token string) (*models.Session, error){
+    finalToken := s.extractBearerToken(token)
+    if finalToken == "" {
+        return nil, errcode.ErrSessionNotFound
+    }
+    session, err := s.authenticate(ctx, finalToken)
+    if err != nil {
+        return nil, err
+    }
+
+    if _, err := s.userService.ToMyPage(ctx, session.UserID); err != nil {
+        return nil, err
+    }
+
+    if session.ShouldRefresh() {
+        if err := s.refreshSession(ctx, session); err != nil {
+            return nil, err 
+        }
+    }
+    return session, nil
+}
+
+func (s *sessionService) refreshSession(ctx context.Context, session *models.Session) error {
+    newExpiry := time.Now().Add(models.SessionDuration).UTC()
+
+    if err := s.sessionStore.UpdateExpiresAt(ctx, newExpiry, session.ID); err != nil {
+        return fmt.Errorf("セッション期限の更新に失敗しました: %w", err)
+    }
+
+    session.ExpiresAt = newExpiry
+    return nil
+}
+
+func (s *sessionService) Revoke(ctx context.Context, token string) error {
+    finalToken := s.extractBearerToken(token)
+    if finalToken == "" {
+        return errcode.ErrSessionNotFound
+    }
+    tokenHash, err := s.validateAndHash(finalToken)
+    if err != nil {
+        return err
+    }
+    err = s.sessionStore.DeleteByHash(ctx, tokenHash)
+    if err != nil {
+        return fmt.Errorf("セッションの削除に失敗しました: %w", err)
+    }
+
+    return nil
+}
+</file>
+
+<file path="internal/service/tweet_service_test.go">
+package service
+
+import (
+	"aita/internal/models"
+	"aita/internal/pkg/utils"
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+)
+
+func TestPostTweet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	imageURL := utils.StringPtr("https://example.com/mock.jpg")
+	tests := []struct{
+		name			string
+		userID          int64
+		inputBody       *dto.CreateTweetRequest
+		setupMock       func(mt *mockTweetStore)
+		wantedErr       error
+	}{
+		{
+			name: "発送成功",
+			userID: 101,
+			inputBody: &dto.CreateTweetRequest{
+				Content: "Hello world",
+				ImageURL: imageURL,
+			},
+			setupMock: func(mt *mockTweetStore) {
+				expectedTweet := &models.Tweet{
+					ID: 1,
+					UserID: 101,
+					Content:"Hello world",
+					ImageURL: imageURL,
+					CreatedAt: time.Now().UTC(),
+				}
+				mt.On("CreateTweet", mock.Anything, mock.MatchedBy(func(t *models.Tweet) bool {
+					return t.UserID == 101 && t.Content == "Hello world"
+				})).Return(expectedTweet, nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name: "パラメーターエラー、無効なユーザーID",
+			userID: -1,
+			inputBody:&dto.CreateTweetRequest{
+				Content: "Hello world",
+			},
+			setupMock: func(mt *mockTweetStore){},
+			wantedErr: errcode.ErrInvalidUserID,
+		},
+		{
+			name: "パラメーターエラー、コンテントは空である",
+			userID: 101,
+			inputBody:&dto.CreateTweetRequest{
+				Content: "",
+			},
+			setupMock: func(mt *mockTweetStore){},
+			wantedErr: errcode.ErrRequiredFieldMissing,
+		},
+		{
+			name: "パラメーターエラー、無効なコンテント",
+			userID: 101,
+			inputBody:&dto.CreateTweetRequest{
+				Content: strings.Repeat("a", 1001),
+			},
+			setupMock: func(mt *mockTweetStore){},
+			wantedErr: errcode.ErrInvalidContentFormat,
+		},
+		{
+			name: "データベースエラー,ユーザーが存在しない場合",
+			userID: 99999,
+			inputBody: &dto.CreateTweetRequest{
+				Content: "Hello world",
+				ImageURL: utils.StringPtr("https://example.com/mock.jpg"),
+			},
+			setupMock: func(mt *mockTweetStore) {
+				mt.On("CreateTweet", mock.Anything, mock.MatchedBy(func(t *models.Tweet) bool {
+					if t.UserID != 99999 || t.Content != "Hello world" {
+						return false
+					}	
+					if t.ImageURL == nil || *t.ImageURL != *imageURL {
+						return false
+					}
+					return true
+				})).Return(nil, errMockInternal)
+			},
+			wantedErr: errMockInternal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mt := new(mockTweetStore)
+			tt.setupMock(mt)
+			svc := NewTweetService(mt)
+			ctx := context.Background()
+			res, err := svc.PostTweet(ctx, tt.userID, tt.inputBody)
+
+			if tt.wantedErr != nil {
+				require.Error(t, err)
+				require.ErrorIs(t, err, tt.wantedErr,"期待されるエラータイプが一致します")
+				require.Nil(t, res, "エラーが発生した場合は、レスポンスはnilであるべきです")
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				require.Equal(t, tt.inputBody.Content, res.Content)
+				require.Equal(t, tt.inputBody.ImageURL, res.ImageURL)
+			}
+
+			mt.AssertExpectations(t)
+		})
+	}
+}
+</file>
+
+<file path="internal/service/user_service.go">
+package service
+
+import (
+	"aita/internal/models"
+	"aita/internal/pkg/utils"
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+)
+
+
+type UserStore interface {
+	Create(ctx context.Context, user *models.User) (*models.User, error)
+	GetByEmail(ctx context.Context, email string) (*models.User, error)
+	GetByID(ctx context.Context, id int64) (*models.User, error)
+}
+
+type PasswordHasher interface {
+	Generate(password string) (string, error) 
+	Compare(hashedPassword, password string) error
+}
+type userService struct {
+	userStore UserStore
+	hasher PasswordHasher
+}
+
+func NewUserService(us UserStore, h PasswordHasher) *userService{
+	return &userService{
+		userStore: us,
+		hasher: h,
+	}
+}
+
+func (s *userService) Register(ctx context.Context, req *dto.SignupRequest) (*models.User, error) {
+	req.Username = strings.TrimSpace(req.Username)
+	req.Email = strings.TrimSpace(req.Email)
+	if err := models.IsValidSignUpReq(req); err != nil {
+		return nil, err
+	}
+
+	hash, err := s.hasher.Generate(req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("パスワードをハッシュ化に失敗しました: %w", err)
+	}
+
+	user := &models.User{
+		Username: 		req.Username,
+		Email:    		req.Email,
+		PasswordHash:   hash,
+	}
+
+	user, err = s.userStore.Create(ctx, user)
+	if err != nil {
+		return nil, fmt.Errorf("登録に失敗しました: %w", err)
+	}
+	return user, nil
+}
+
+
+func (s *userService) Login(ctx context.Context, email, password string) (*models.User, error) {
+	if email == "" || password == "" {
+		return nil, errcode.ErrRequiredFieldMissing
+	}
+	
+	cleanEmail := strings.TrimSpace(email)
+	if !utils.IsValidEmail(cleanEmail) {
+		return nil,  errcode.ErrInvalidEmailFormat
+	}
+	if len(password) < 3 || len (password) > 72 {
+		return nil,  errcode.ErrInvalidPasswordFormat
+	}
+    
+	user, err := s.userStore.GetByEmail(ctx, cleanEmail)
+	if err != nil {
+		if errors.Is(err, errcode.ErrUserNotFound) {
+            return nil, errcode.ErrInvalidCredentials
+        }
+        return nil, fmt.Errorf("ユーザー情報の取得に失敗しました: %w", err)
+	}
+
+	err = s.hasher.Compare(user.PasswordHash, password)
+	if err != nil {
+		return nil, errcode.ErrInvalidCredentials
+	}
+	return user, nil
+}
+
+func (s *userService) ToMyPage(ctx context.Context, userID int64) (*models.User, error) {
+	if userID <= 0 {
+		return nil, errcode.ErrInvalidUserID
+	}
+	user, err := s.userStore.GetByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("ユーザー情報の取得に失敗しました: %w", err)
+	}
+	return user, nil
+}
+</file>
+
+<file path="docker-compose.yml">
+version: '3.8'
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: aita_postgres_v2  
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "${DB_PORT}:5432" 
+    volumes:
+      - postgres_data_v2:/var/lib/postgresql/data
+      - ./scripts/init-db:/docker-entrypoint-initdb.d
+    networks:
+      - aita_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: aita_redis
+    ports:
+      - "${REDIS_PORT}:6379"  
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"] 
+    networks:
+      - aita_network
+
+networks:
+  aita_network:
+    driver: bridge
+
+volumes:
+  postgres_data_v2:
+  redis_data:
+</file>
+
+<file path="internal/api/middleware_test.go">
+package api
+
+import (
+	"aita/internal/contextkeys"
+	"aita/internal/models"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+)
+
+func TestAuthMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name           string
+		authHeader     string
+		setupMock      func(m *mockSessionService)
+		expectedStatus int
+		expectedUserID int64
+	}{
+		{
+			name:       "認証成功: 有効なBearerトークン",
+			authHeader: "Bearer valid_token",
+			setupMock: func(m *mockSessionService) {
+				session := &models.Session{UserID: 123}
+				m.On("Validate", mock.Anything, "Bearer valid_token").Return(session, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedUserID: 123,
+		},
+		{
+			name:       "認証成功:大文字でもServiceが許容する場合",
+			authHeader: "BEARER raw_token_string",
+			setupMock: func(m *mockSessionService) {
+				session := &models.Session{UserID: 456}
+				m.On("Validate", mock.Anything, "raw_token_string").Return(session, nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectedUserID: 456,
+		},
+		{
+			name:       "未認証：ヘッダーが空",
+			authHeader: "",
+			setupMock: func(m *mockSessionService) {
+				m.On("Validate", mock.Anything, "").Return(nil, errcode.ErrSessionNotFound)
+			},
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "認証失敗：トークンが期限切れ",
+			authHeader: "Bearer expired_token",
+			setupMock: func(m *mockSessionService) {
+				m.On("Validate", mock.Anything, "Bearer expired_token").Return(nil, errcode.ErrSessionExpired)
+			},
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "ユーザー不在：トークンは正しいがユーザーが削除された",
+			authHeader: "Bearer valid_but_no_user",
+			setupMock: func(m *mockSessionService) {
+				m.On("Validate", mock.Anything, "Bearer valid_but_no_user").Return(nil, errcode.ErrUserNotFound)
+			},
+			expectedStatus: http.StatusNotFound, 
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mSession := new(mockSessionService)
+			tt.setupMock(mSession)
+
+			w := httptest.NewRecorder()
+			r := gin.New()
+
+			r.Use(AuthMiddleware(mSession))
+
+			r.GET("/test", func(c *gin.Context) {
+				userID, exists := c.Get(contextkeys.AuthPayloadKey)
+				if exists {
+					c.JSON(http.StatusOK, gin.H{"user_id": userID})
+				} else {
+					c.Status(http.StatusOK)
+				}
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+			r.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			if tt.expectedStatus == http.StatusOK {
+				var resp map[string]int64
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, tt.expectedUserID, resp["user_id"])
+			}
+
+			mSession.AssertExpectations(t)
+		})
+	}
+}
+</file>
+
+<file path="internal/api/mock_test.go">
+package api
+
+import (
+	"aita/internal/models"
+	"aita/internal/pkg/testutils"
+	"context"
+
+	"github.com/stretchr/testify/mock"
+)
+
+type mockUserService struct {
+	mock.Mock
+}
+
+type mockSessionService struct {
+	mock.Mock
+}
+
+type mockTweetService struct {
+	mock.Mock
+} 
+
+func(m *mockUserService) Register(ctx context.Context, req *dto.SignupRequest) (*models.User, error) {
+	args := m.Called(ctx, req)
+	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+}
+
+func(m *mockUserService) Login(ctx context.Context, email, password string) (*models.User, error) {
+	args := m.Called(ctx, email, password)
+	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+}
+
+func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*models.User, error) {
+	args := m.Called(ctx, userID)
+	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+}	
+
+func (m *mockSessionService) Issue(ctx context.Context, userID int64) (*models.IssueResponse, error)  {
+	args := m.Called(ctx, userID)
+	return testutils.SafeGet[models.IssueResponse](args, 0), args.Error(1)
+}
+
+func(m *mockSessionService) Revoke(ctx context.Context, token string) error {
+	args := m.Called(ctx, token)
+	return args.Error(0)
+}
+
+func (m *mockSessionService)Validate(ctx context.Context, token string) (*models.Session, error) {
+	args := m.Called(ctx, token)
+	return testutils.SafeGet[models.Session](args, 0), args.Error(1)
+}
+
+func(m *mockTweetService) PostTweet(ctx context.Context, userID int64, req *dto.CreateTweetRequest) (*models.Tweet, error) {
+	args := m.Called(ctx, userID, req)
+	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+}
+</file>
+
+<file path="internal/db/tweet_store_test.go">
+package db
+
+import (
+	"aita/internal/models"
+	"aita/internal/pkg/testutils"
+	"aita/internal/pkg/utils"
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCreateTweet(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username: "henry",
+		Email: "text@example.com",
+		PasswordHash:"passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+	t.Run("正常にツイートできること", func(t *testing.T) {
+		tweet := &models.Tweet{
+			UserID: createdUser.ID,
+			Content: "これはテスト用のツイート投稿です",
+			ImageURL: utils.StringPtr("https://example.com/image.jpg"),
+		}
+		createdTweet, err := testTweetStore.CreateTweet(ctx, tweet)
+		require.NoError(t, err, "CreatedTweetはエラーを返すべきではありません")
+		require.NotZero(t, createdTweet.ID, "投稿後、IDが発番されるはずです")
+		require.NotZero(t, createdTweet.CreatedAt, "投稿後、作成日時がセットされるはずです")
+		require.Equal(t, tweet.UserID, createdTweet.UserID)
+		require.Equal(t, tweet.Content, createdTweet.Content)
+		require.Equal(t, tweet.ImageURL, createdTweet.ImageURL)
+	})
+}
+
+func TestCreateTweetWhileError(t *testing.T) {
+		testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username: "henry",
+		Email: "text@example.com",
+		PasswordHash:"passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+	
+	t.Run("存在しないUserIDNの場合は、ErrUserNotFoundを返すこと", func(t *testing.T) {
+		badTweet := &models.Tweet{
+			UserID: 99999,
+			Content: "存在しないユーザーのツイート",
+		}
+		createdTweet,err := testTweetStore.CreateTweet(ctx, badTweet)
+		require.Error(t, err, "ユーザーが存在しない場合、エラーを返すべきです")
+		require.ErrorIs(t, err, errcode.ErrUserNotFound, "エラーはErrUserNotFoundであるべきです")
+		require.Nil(t, createdTweet, "エラー時、生成されたツイートはnilであるべきです")
+	})	
+	
+	t.Run("Contentが制限文字数を超えた場合、ErrValueTooLongを返すこと", func(t *testing.T) {
+        longContent := strings.Repeat("a", 3000) 
+        badTweet := &models.Tweet{
+            UserID:  createdUser.ID,
+            Content: longContent,
+        }
+        _, err := testTweetStore.CreateTweet(ctx, badTweet)
+        
+        require.Error(t, err)
+        require.ErrorIs(t, err, errcode.ErrValueTooLong, "DBの切捨てエラーが正しくマッピングされること")
+    })
+	
+	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+		
+		tempTweetStore := NewPostgresTweetStore(tempDB)
+		tempDB.Close()
+
+		tweet := &models.Tweet{
+			UserID: createdUser.ID,
+			Content: "これはテスト用のツイート投稿です",
+			ImageURL: utils.StringPtr("https://example.com/image.jpg"),
+		}
+		createdTweet, err := tempTweetStore.CreateTweet(ctx, tweet)
+		require.Error(t, err, "内部エラーの場合、エラーを返すべきです")
+		assert.Contains(t, err.Error(), "ツイートの挿入に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, createdTweet, "エラー時、生成されたツイートはnilであるべきです")
+	})
+}
+</file>
+
+<file path="internal/db/user_store_test.go">
+package db
+
+import (
+	"aita/internal/models"
+	"aita/internal/pkg/testutils"
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCreate(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	initUser := &models.User{
+		Username: "henry",
+		Email: "text@example.com",
+		PasswordHash:"hashedpassword",
+	}
+
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err, "CreatedUserはエラーを返すべきではありません")
+	require.NotNil(t, createdUser, "作成されたユーザーオブジェクトは空であるべきではありません")
+	assert.Equal(t, initUser.Username, createdUser.Username, "ユーザー名は一致するべきです")
+	assert.Equal(t, initUser.Email, createdUser.Email, "メールは一致する必要があります")
+	assert.Equal(t, initUser.PasswordHash, createdUser.PasswordHash, "パスワードハッシュは空であるべきではありません")
+	assert.NotZero(t, createdUser.ID, "IDは自動生成されるべきです")
+	assert.NotZero(t, createdUser.CreatedAt, "CreatedAtは自動生成されるべきです")
+	assert.Equal(t, time.UTC, createdUser.CreatedAt.Location(), "CreatedAtはUTCであるべきです")
+}
+
+func TestCreateWhileConflict(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	initUser := &models.User{
+		Username: "henry",
+		Email: "text@example.com",
+		PasswordHash:"hashedpassword",
+	}
+	_, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	t.Run("23505: ユーザー名の競合", func(t *testing.T) {
+		newUser := &models.User{
+			Username: "henry",
+			Email: "other@example.com",
+			PasswordHash: "secretpassword",
+		}
+		createdUser, err := testUserStore.Create(ctx, newUser)
+
+		assert.ErrorIs(t, err, errcode.ErrUsernameConflict, "エラーはErrUsernameConflictであるべきです")
+		assert.Nil(t, createdUser, "エラー時、生成されたユーザーはnilであるべきです")
+	})	
+
+	t.Run("23505: メールアドレスの競合", func(t *testing.T) {
+		newUser := &models.User{
+			Username: "Test_name",
+			Email: "text@example.com",
+			PasswordHash: "secretpassword",
+		}
+		createdUser, err := testUserStore.Create(ctx, newUser)
+		assert.ErrorIs(t, err, errcode.ErrEmailConflict, "エラーはErrEmailConflictであるべきです")
+		assert.Nil(t, createdUser, "エラー時、生成されたユーザーはnilであるべきです")
+	})
+}
+
+func TestCreateWhileAnotherErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	t.Run("22001: 文字列長超過", func(t *testing.T) {
+		newUser := &models.User{
+			Username: strings.Repeat("u", 51),
+			Email: "long@example.com",
+			PasswordHash : "sercretpassword",
+		}
+		createdUser, err := testUserStore.Create(ctx, newUser)
+		assert.ErrorIs(t, err, errcode.ErrValueTooLong)
+		assert.Nil(t, createdUser)
+		
+	})
+
+	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+
+		tempUserStore := NewPostgresUserStore(tempDB)
+		tempDB.Close()
+
+		newUser := &models.User{
+			Username: "henry",
+			Email: "text@example.com",
+			PasswordHash:"hashedpassword",
+		}
+		createdUser, err := tempUserStore.Create(ctx, newUser)
+		require.Error(t, err, "内部エラーの場合、エラーを返すべきです")
+		assert.Contains(t, err.Error(), "ユーザーの生成に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, createdUser, "エラー時、生成されたユーザーはnilであるべきです")
+	})
+}
+
+func TestGetByEmail(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	initUser := &models.User{
+		Username: "henry",
+		Email: "get@example.com",
+		PasswordHash:"hashedpassword",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+	t.Run("ユーザーが存在する", func(t *testing.T) {
+		foundUser, err := testUserStore.GetByEmail(ctx, "get@example.com")
+		require.NoError(t, err, "ユーザーが存在する場合、エラーを返すべきではありません")
+		require.NotNil(t, foundUser, "見つかったユーザーは空であってはなりません")
+		assert.Equal(t, createdUser.ID, foundUser.ID, "見つかったユーザーIDが一致するはずです")
+		assert.Equal(t, createdUser.Username, foundUser.Username, "見つかったユーザー名が一致するはずです")
+		assert.Equal(t, createdUser.Email, foundUser.Email, "見つかったメールアドレスが一致するはずです")
+		assert.Equal(t, createdUser.PasswordHash, foundUser.PasswordHash, "見つかったPasswordHashが一致するはずです")
+		assert.True(t, createdUser.CreatedAt.Equal(foundUser.CreatedAt), "CreatedAtは一致するべきです")
+	})
+}
+
+func TestGetByEmailWhileError(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	initUser := &models.User{
+		Username: "henry",
+		Email: "get@example.com",
+		PasswordHash:"hashedpassword",
+	}
+	_, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	t.Run("ユーザーが存在しない", func(t *testing.T) {
+		unfoundUser, err := testUserStore.GetByEmail(ctx, "wrong@example.com")
+		assert.ErrorIs(t, err, errcode.ErrUserNotFound)
+		assert.Nil(t, unfoundUser)
+	})
+
+	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+
+		tempUserStore := NewPostgresUserStore(tempDB)
+		tempDB.Close()
+
+		unfoundUser, err := tempUserStore.GetByEmail(ctx, "get@example.com")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(),"emailによるユーザー取得に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, unfoundUser)
+	})
+}
+
+func TestGetByID(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	initUser := &models.User{
+		Username: "testuser_for_id",
+		Email:    "getid@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	foundUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+	require.NoError(t, err, "アイディが存在する場合、エラーを返すべきではありません")
+	require.NotNil(t, foundUser, "見つかったユーザーは空であるべきではありません")
+	assert.Equal(t, createdUser.ID, foundUser.ID, "見つかったユーザーIDが一致するべきです")
+	assert.Equal(t, createdUser.Username, foundUser.Username, "見つかったユーザー名が一致するべきです")
+	assert.Equal(t, createdUser.Email, foundUser.Email, "見つかったメールアドレスが一致するべきです")
+	assert.Equal(t, createdUser.PasswordHash, foundUser.PasswordHash, "見つかったPasswordHashが一致するべきです")
+	assert.True(t, createdUser.CreatedAt.Equal(foundUser.CreatedAt), "CreatedAtは一致するべきです")
+}
+
+func TestGetByIDWhlieError(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	initUser := &models.User{
+		Username: "testuser_for_id",
+		Email:    "getid@example.com",
+		PasswordHash: "passwordHash",
+	}
+	_, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+	t.Run("ユーザーが存在しない", func(t *testing.T) {
+		unfoundUser, err := testUserStore.GetByID(ctx, 99999)
+		assert.ErrorIs(t, err, errcode.ErrUserNotFound, "エラーはErrNotFound であるべきです")
+		assert.Nil(t, unfoundUser, "見つかったユーザーオブジェクトは空であるべきです")
+	})
+
+	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+		
+		tempUserStore := NewPostgresUserStore(tempDB)
+		tempDB.Close()
+
+		unfoundUser, err := tempUserStore.GetByID(ctx,1)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "IDによるユーザー取得に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, unfoundUser)
+	})
+}
+</file>
+
+<file path="internal/models/session.go">
+package models
+
+import(
+	"time"
+)
+
+const (
+	MaxSessionLife = 7 * 24 * time.Hour
+	SessionDuration = 24 * time.Hour
+)
+
+type Session struct{
+	ID            int64        `db:"id"`
+	UserID        int64        `db:"user_id"`
+	TokenHash     string       `db:"token_hash"`
+	ExpiresAt     time.Time    `db:"expires_at"`
+	CreatedAt     time.Time    `db:"created_at"`
+}
+
+type IssueResponse struct {
+    Session  *Session
+    Token string
+}
+
+func(s *Session) IsExpired() bool {
+	if s == nil {
+		return true
+	}
+
+	now := time.Now().UTC()
+	if now.After(s.ExpiresAt.UTC()) {
+		return true
+	}
+	maxAge := MaxSessionLife
+	if now.After(s.CreatedAt.UTC().Add(maxAge)) {
+		return true
+	}
+	return false
+}
+
+func (s *Session) ShouldRefresh() bool {
+	if s == nil || s.IsExpired(){
+		return false
+	}
+
+	totalDuration := s.ExpiresAt.UTC().Sub(s.CreatedAt.UTC())
+	remaining := s.ExpiresAt.UTC().Sub(time.Now().UTC())
+
+	if totalDuration <= 0 {
+		return true
+	}
+	return remaining < totalDuration / 4
+}
+</file>
+
+<file path="internal/models/user.go">
+package models
+
+import (
+	"time"
+)
+
+type SignupRequest struct{
+	Username      string        `json:"username" binding:"required,min=4,max=50" `
+	Email         string        `json:"email" binding:"required,email"`
+	Password      string        `json:"password" binding:"required,min=8,max=72"`
+}
+
+type LoginRequest struct{
+	Email         string        `json:"email" binding:"required,email"`
+	Password      string        `json:"password" binding:"required,min=8,max=72"`
+}
+
+type User struct{
+	ID            int64        `db:"id"`
+	Username      string       `db:"username"`
+	Email         string       `db:"email"`
+	PasswordHash  string       `db:"password_hash"`
+	CreatedAt     time.Time    `db:"created_at"`
+} 
+
+type UserResponse struct{
+	ID            int64        `json:"id"`
+	Username      string       `json:"username"`
+	Email         string       `json:"email"`
+	CreatedAt     time.Time    `json:"created_at"`
+}
+
+type LoginResponse struct{
+	SessionToken  string       `json:"session_token"`	
+	User          UserResponse `json:"user"`
+}
+
+func NewUserResponse(user *User) UserResponse {
+	return UserResponse{
+		ID:        user.ID,
+		Username:  user.Username,
+		Email:     user.Email,
+		CreatedAt: user.CreatedAt,
+	}
+}
+</file>
+
+<file path="internal/pkg/testutils/testdb.go">
+package testutils
+
+import (
+	"aita/internal/config"
+	"log"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+)
+
+type TestContext struct {
+	TestDB *sqlx.DB
+	DSN string
+}
+
+func OpenDB(dsn string) (*sqlx.DB, error) {
+	db, err := sqlx.Open("postgres", dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+	return db, err
+}
+func  (ctx *TestContext) CleanupTestDB() {
+	_, err := ctx.TestDB.Exec(`TRUNCATE TABLE sessions, tweets, users RESTART IDENTITY CASCADE;`)
+	if err != nil {
+		log.Fatalf("テストデータベースに接続できません: %v", err)
+	}
+}
+func RunTestMain(m *testing.M) (*TestContext, func()) {
+	os.Setenv("APP_ENV", "test")
+	cfg := config.LoadConfig()
+	db, err := sqlx.Connect("postgres", cfg.DBConnStr)
+	if err != nil {
+		log.Fatalf("テストデータベースに接続できません (%.50s...): %v", cfg.DBConnStr, err)
+	}
+	migrationDir := config.GetPath("migrations")
+	migrationURL := "file://" + filepath.ToSlash(migrationDir)
+	mig, err := migrate.New(
+        migrationURL, 
+        cfg.DBConnStr,
+    )
+	if err != nil {
+        log.Fatalf("マイグレーションインスタンスの生成に失敗しました: %v", err)
+    }
+	if err := mig.Up(); err != nil && err != migrate.ErrNoChange  {
+		log.Fatalf("マイグレーションの実行に失敗しました: %v", err)
+	}
+	teardown := func() {
+		srcErr, dbErr := mig.Close()
+		if srcErr != nil || dbErr != nil {
+			log.Printf("マイグレーションインスタンスの停止に失敗しました: %v, %v", srcErr, dbErr)
+		}
+		db.Close()
+	}
+	return &TestContext{
+		TestDB: db,
+		DSN:    cfg.DBConnStr,
+	}, teardown
+}
+</file>
+
+<file path="internal/service/mock_service_test.go">
+package service
+
+import (
+	"aita/internal/models"
+	"aita/internal/pkg/testutils"
+	"context"
+	"errors"
+	"time"
+
+	"github.com/stretchr/testify/mock"
+)
+
+var (
+    errMockInternal = errors.New("接続拒否")
+    errMockHashFailed = errors.New("暗号化内部エラー")
+	errMockTokenFailed = errors.New("トークン内部エラー")
+)
+
+type mockUserStore struct {
+	mock.Mock
+}
+
+func (m *mockUserStore) Create(ctx context.Context, user *models.User) (*models.User, error) {
+	args := m.Called(ctx, user)
+	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+}
+
+func (m *mockUserStore) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	args := m.Called(ctx, email)
+	return testutils.SafeGet[models.User](args,0), args.Error(1)
+}
+
+func (m *mockUserStore) GetByID(ctx context.Context, id int64) (*models.User, error) {
+	args := m.Called(ctx, id)
+	return testutils.SafeGet[models.User](args,0), args.Error(1)
+}
+
+type mockSessionStore struct {
+	mock.Mock
+}
+
+func (m *mockSessionStore) Create(ctx context.Context, session *models.Session) (*models.Session, error) {
+	args := m.Called(ctx, session)
+	return testutils.SafeGet[models.Session](args, 0), args.Error(1)
+}
+
+func(m *mockSessionStore) GetByHash(ctx context.Context, tokenHash string) (*models.Session, error) {
+	args := m.Called(ctx, tokenHash)
+	return testutils.SafeGet[models.Session](args, 0), args.Error(1)
+}
+
+func(m *mockSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt time.Time, id int64) error {
+	args := m.Called(ctx, expiresAt, id)
+	return args.Error(0)
+}
+
+func(m *mockSessionStore) DeleteByHash(ctx context.Context, tokenHash string) error {
+	args := m.Called(ctx,tokenHash)
+	return args.Error(0)
+}
+
+type mockTweetStore struct {
+	mock.Mock
+}
+
+func (m *mockTweetStore) CreateTweet(ctx context.Context, twt *models.Tweet) (*models.Tweet, error) {
+	args := m.Called(ctx, twt)
+	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+}
+
+
+type mockBcryptHasher struct {
+	mock.Mock
+}
+
+func (m *mockBcryptHasher) Generate(password string) (string, error) {
+	args := m.Called(password)
+	return args.String(0), args.Error(1)
+}
+
+func(m *mockBcryptHasher) Compare(hashedPassword, password string) error {
+	args := m.Called(hashedPassword, password)
+	return args.Error(0)
+}
+
+type mockTokenManager struct {
+	mock.Mock
+}
+
+func(m *mockTokenManager) Generate(length int) (string, error) {
+	args := m.Called(length)
+	return args.String(0), args.Error(1)
+}
+
+func(m *mockTokenManager) Hash(hash string) string {
+	args := m.Called(hash)
+	return args.String(0)
+}
+
+type mockUserService struct {
+	mock.Mock
+}
+
+func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*models.User, error) {
+	args := m.Called(ctx, userID)
+	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+}
+</file>
+
+<file path="internal/service/tweet_service.go">
+package service
+
+import (
+	"aita/internal/models"
+	"context"
+	"fmt"
+)
+
+type TweetStore interface {
+	CreateTweet(ctx context.Context, tweet *models.Tweet) (*models.Tweet, error)
+}
+
+type tweetService struct {
+	tweetStore TweetStore
+}
+
+func NewTweetService(ts TweetStore) *tweetService {
+	return &tweetService{tweetStore: ts}
+}
+
+func (s *tweetService) PostTweet(ctx context.Context, userID int64, req *dto.CreateTweetRequest) (*models.Tweet, error) {
+	if userID <= 0 {
+		return nil, errcode.ErrInvalidUserID
+	}
+	if err := models.IsValidTweetReq(req); err != nil {
+		return nil, err
+	}
+	initialTweet := &models.Tweet{
+		UserID:   userID,
+		Content:  req.Content,
+		ImageURL: req.ImageURL,
+	}
+	savedTweet, err := s.tweetStore.CreateTweet(ctx, initialTweet)
+	if err != nil {
+		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
+	}
+	return savedTweet, nil
+
+}
+</file>
+
+<file path="migrations/000001_create_initial_tables.up.sql">
+-- users table
+CREATE TABLE "users"(
+    "id" bigserial PRIMARY KEY,
+    "username" varchar(50) UNIQUE NOT NULL,
+    "email" varchar(255) UNIQUE NOT NULL,
+    "password_hash" varchar(255) NOT NULL,
+    "created_at" timestamptz NOT NULL DEFAULT (now())
+);
+--tweets table
+CREATE TABLE "tweets"(
+    "id" bigserial PRIMARY KEY,
+    "user_id" bigint NOT NULL,
+    "content" text NOT NULL,
+    "image_url" varchar(255),
+    "created_at" timestamptz NOT NULL DEFAULT(now())
+);
+--sessions table
+CREATE TABLE "sessions" (
+    "id" bigserial PRIMARY KEY,
+    "user_id" bigint NOT NULL,
+    "token_hash" varchar(255) UNIQUE NOT NULL,
+    "expires_at" timestamptz NOT NULL 
+);
+ALTER TABLE "tweets" ADD FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE;
+ALTER TABLE "sessions" ADD FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE;
+</file>
+
+<file path="go.mod">
+module aita
+
+go 1.25.1
+
+require (
+	github.com/gin-gonic/gin v1.11.0
+	github.com/go-playground/validator/v10 v10.27.0
+	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/jmoiron/sqlx v1.4.0
+	github.com/joho/godotenv v1.5.1
+	github.com/lib/pq v1.10.9
+	github.com/stretchr/testify v1.11.1
+	golang.org/x/crypto v0.45.0
+)
+
+require (
+	github.com/bytedance/sonic v1.14.0 // indirect
+	github.com/bytedance/sonic/loader v0.3.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudwego/base64x v0.1.6 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
+	github.com/gin-contrib/sse v1.1.0 // indirect
+	github.com/go-playground/locales v0.14.1 // indirect
+	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/goccy/go-json v0.10.2 // indirect
+	github.com/goccy/go-yaml v1.18.0 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/leodido/go-urn v1.4.0 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/quic-go/qpack v0.5.1 // indirect
+	github.com/quic-go/quic-go v0.54.0 // indirect
+	github.com/redis/go-redis/v9 v9.17.3 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
+	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/ugorji/go/codec v1.3.0 // indirect
+	go.uber.org/mock v0.5.0 // indirect
+	golang.org/x/arch v0.20.0 // indirect
+	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/tools v0.38.0 // indirect
+	google.golang.org/protobuf v1.36.9 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
+</file>
+
+<file path="internal/api/middleware.go">
+package api
+
+import (
+	"aita/internal/contextkeys"
+	"aita/internal/models"
+	"context"
+
+	"github.com/gin-gonic/gin"
+)
+
+type AuthSessionService interface {
+	Validate(ctx context.Context, token string) (*models.Session, error)
+}
+
+func AuthMiddleware(svc AuthSessionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		session, err := svc.Validate(c.Request.Context(), authHeader)
+		if err != nil {
+			c.AbortWithStatusJSON(dto.GetStatusCode(err), dto.Fail(err))
+			return
+		}
+		c.Set(contextkeys.AuthPayloadKey, session.UserID)
+		c.Next()
+	}
+}
+</file>
+
+<file path="internal/api/tweet_handler.go">
+package api
+
+import (
+    "aita/internal/contextkeys"
+    "aita/internal/models"
+    "context"
+    "net/http"
+
+    "github.com/gin-gonic/gin"
+)
+
+type TweetService interface {
+    PostTweet(ctx context.Context, userID int64, req *dto.CreateTweetRequest) (*models.Tweet, error)
+}
+
+type TweetHandler struct {
+    tweetService TweetService
+}
+
+func NewTweetHandler(svc TweetService) *TweetHandler {
+    return &TweetHandler{tweetService: svc}
+}
+
+func (h *TweetHandler) Create(c *gin.Context) {
+    uidRow, exists := c.Get(contextkeys.AuthPayloadKey)
+    if !exists {
+		err := errcode.ErrSessionNotFound
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+    
+    userID, ok := uidRow.(int64)
+    if !ok {
+        err := errcode.ErrSessionNotFound
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+
+    var req dto.CreateTweetRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        appErr := dto.FilterBindError(err)
+        c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+        return
+    }
+
+    tweet, err := h.tweetService.PostTweet(c.Request.Context(), userID, &req)
+    if err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+
+    c.JSON(http.StatusCreated, dto.Success(dto.NewTweetResponse(tweet)))
+}
+</file>
+
+<file path="internal/api/user_handler_test.go">
+package api
+
+import (
+	"aita/internal/contextkeys"
+	"aita/internal/models"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+)
+
+func TestSignUp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name           string
+		requestBody    any
+		setupMock      func(mu *mockUserService, ms *mockSessionService)
+		expectedStatus int
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder)
+	}{
+		{
+			name: "ユーザー登録成功",
+			requestBody: dto.SignupRequest{
+				Username: "mock_user",
+				Email:    "taro@example.com",
+				Password: "password123",
+			},
+			setupMock: func(mu *mockUserService, ms *mockSessionService) {
+				user := &models.User{ID: 1, Username: "mock_User"}
+				mu.On("Register", mock.Anything, mock.Anything).Return(user, nil)
+				ms.On("Issue", mock.Anything, user.ID).Return(&models.IssueResponse{Token: "valid_token_string"}, nil)
+			},
+			expectedStatus: http.StatusCreated,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)				
+				data := resp.Data.(map[string]any)
+				assert.Equal(t, "valid_token_string", data["session_token"])
+			},
+		},
+		{
+			name:        "リクエスト形式不正: 無効なJSONを送信した場合",
+			requestBody: `{"username": "incomplete_json`, 
+			setupMock:   func(mu *mockUserService, ms *mockSessionService) {},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				
+				assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
+				assert.Equal(t, "JSONの構文が正しくありません", resp.Error)
+			},
+		},
+		{
+			name: "バリデーションエラー：メールアドレス重複",
+			requestBody: dto.SignupRequest{
+				Username: "mock_user",
+				Email:    "exists@example.com",
+				Password: "password123",
+			},
+			setupMock: func(mu *mockUserService, ms *mockSessionService) {
+				mu.On("Register", mock.Anything, mock.Anything).Return(nil, errcode.ErrEmailConflict)
+			},
+			expectedStatus: http.StatusConflict,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				
+				assert.Equal(t, "EMAIL_CONFLICT", resp.Code)
+				assert.Contains(t, resp.Error, "既に使用されています")
+			},
+		},
+		{
+            name: "セッション発行失敗",
+            requestBody: dto.SignupRequest{
+                Username: "error_user",
+                Email:    "issue_fail@test.com",
+                Password: "password123",
+            },
+            setupMock: func(mu *mockUserService, ms *mockSessionService) {
+                user := &models.User{ID: 50, Username: "error_user"}
+                mu.On("Register", mock.Anything, mock.Anything).Return(user, nil)
+                ms.On("Issue", mock.Anything, int64(50)).Return(nil, errors.New("redis connection failed"))
+            },
+            expectedStatus: http.StatusInternalServerError, 
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
+            },
+        },
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mu, ms := new(mockUserService), new(mockSessionService)
+			h := NewUserHandler(mu, ms)
+			tt.setupMock(mu, ms)
+
+			var buf bytes.Buffer
+			if s, ok := tt.requestBody.(string); ok {
+				buf.WriteString(s)
+			} else {
+				json.NewEncoder(&buf).Encode(tt.requestBody)
+			}
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/signup", &buf)
+
+			h.SignUp(c)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+		})
+	}
+}
+
+func TestLogin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name           string
+		requestBody    any
+		setupMock      func(mu *mockUserService, ms *mockSessionService)
+		expectedStatus int
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder)
+	}{
+		{
+			name: "ログイン成功",
+			requestBody: dto.LoginRequest{
+				Email:    "test@example.com",
+				Password: "password123",
+			},
+			setupMock: func(mu *mockUserService, ms *mockSessionService) {
+				user := &models.User{ID: 1, Email: "test@example.com"}
+				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
+				ms.On("Issue", mock.Anything, user.ID).Return(&models.IssueResponse{Token: "login_token_abc"}, nil)
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				data := resp.Data.(map[string]any)
+				assert.Equal(t, "login_token_abc", data["session_token"])
+			},
+		},
+		{
+			name: "JSON構文エラー",
+			requestBody: `{"email": "bad-json"...`, 
+			setupMock:   func(mu *mockUserService, ms *mockSessionService) {},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
+			},
+		},
+		{
+			name: "メールアドレスまたはパスワードが間違っている場合",
+			requestBody: dto.LoginRequest{
+				Email:    "wrong@example.com",
+				Password: "wrongpassword",
+			},
+			setupMock: func(mu *mockUserService, ms *mockSessionService) {
+				mu.On("Login", mock.Anything, mock.Anything, mock.Anything).Return(nil, errcode.ErrInvalidCredentials)
+			},
+			expectedStatus: http.StatusUnauthorized, 
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "INVALID_CREDENTIALS", resp.Code)
+				assert.Contains(t, resp.Error, "正しくありません")
+			},
+		},
+		{
+			name: "トークン発行失敗",
+			requestBody: dto.LoginRequest{
+				Email:    "test@example.com",
+				Password: "password123",
+			},
+			setupMock: func(mu *mockUserService, ms *mockSessionService) {
+				user := &models.User{ID: 1, Email: "test@example.com"}
+				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
+				ms.On("Issue", mock.Anything, user.ID).Return(nil, errors.New("internal server error"))
+			},
+			expectedStatus: http.StatusInternalServerError, 
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mu, ms := new(mockUserService), new(mockSessionService)
+			h := NewUserHandler(mu, ms)
+			tt.setupMock(mu, ms)
+
+			var buf bytes.Buffer
+			if s, ok := tt.requestBody.(string); ok {
+				buf.WriteString(s)
+			} else {
+				json.NewEncoder(&buf).Encode(tt.requestBody)
+			}
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/login", &buf)
+
+			h.Login(c)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+		})
+	}
+}
+
+func TestGetMe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name           string
+		setupContext   func(c *gin.Context)
+		setupMock      func(mu *mockUserService)
+		expectedStatus int
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder)
+	}{
+		{
+			name: "マイページ取得成功",
+			setupContext: func(c *gin.Context) {
+				c.Set(contextkeys.AuthPayloadKey, int64(100))
+			},
+			setupMock: func(mu *mockUserService) {
+				user := &models.User{ID: 100, Username: "test_user", Email: "test@example.com"}
+				mu.On("ToMyPage", mock.Anything, int64(100)).Return(user, nil)
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				data := resp.Data.(map[string]any)
+				assert.Equal(t, "test_user", data["username"])
+				assert.Equal(t, float64(100), data["id"]) 
+			},
+		},
+		{
+			name: "未認証エラー",
+			setupContext: func(c *gin.Context) {},
+			setupMock:      func(mu *mockUserService) {},
+			expectedStatus: http.StatusUnauthorized,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "SESSION_NOT_FOUND", resp.Code)
+			},
+		},
+		{
+			name: "ユーザー不在",
+			setupContext: func(c *gin.Context) {
+				c.Set(contextkeys.AuthPayloadKey, int64(404))
+			},
+			setupMock: func(mu *mockUserService) {
+				mu.On("ToMyPage", mock.Anything, int64(404)).Return(nil, errcode.ErrUserNotFound)
+			},
+			expectedStatus: http.StatusNotFound, 
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "USER_NOT_FOUND", resp.Code)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mu := new(mockUserService)
+			h := NewUserHandler(mu, nil) 
+			tt.setupMock(mu)
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request, _ = http.NewRequest(http.MethodGet, "/me", nil)
+			tt.setupContext(c)
+
+			h.GetMe(c)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+			mu.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUserHandler_Logout(t *testing.T) {
+    mockSvc := new(mockSessionService) 
+    handler := NewUserHandler(nil, mockSvc)
+
+    gin.SetMode(gin.TestMode)
+
+    validHeader := "Bearer valid_token_string_32_chars_long"
+
+    tests := []struct {
+        name           string
+        authHeader     string
+        setupMock      func()
+        expectedStatus int
+        expectMsg      string
+    }{
+        {
+            name:       "ログアウト成功",
+            authHeader: validHeader,
+            setupMock: func() {
+                mockSvc.On("Revoke", mock.Anything, validHeader).Return(nil)
+            },
+            expectedStatus: http.StatusOK,
+            expectMsg:      "ログアウトしました",
+        },
+        {
+            name:       "セッションが見つからない（不正なトークン形式など）",
+            authHeader: "InvalidHeader",
+            setupMock: func() {
+                mockSvc.On("Revoke", mock.Anything, "InvalidHeader").Return(errcode.ErrSessionNotFound)
+            },
+            expectedStatus: http.StatusUnauthorized, 
+        },
+        {
+            name:       "サーバー内部エラー",
+            authHeader: validHeader,
+            setupMock: func() {
+                mockSvc.On("Revoke", mock.Anything, validHeader).Return(errors.New("db error"))
+            },
+            expectedStatus: http.StatusInternalServerError,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mockSvc.ExpectedCalls = nil
+
+            tt.setupMock()
+
+            w := httptest.NewRecorder()
+            c, _ := gin.CreateTestContext(w)
+            
+            c.Request, _ = http.NewRequest(http.MethodPost, "/logout", nil)
+            c.Request.Header.Set("Authorization", tt.authHeader)
+            handler.Logout(c)
+
+            assert.Equal(t, tt.expectedStatus, w.Code)
+            if tt.expectMsg != "" {
+                assert.Contains(t, w.Body.String(), tt.expectMsg)
+            }
+            mockSvc.AssertExpectations(t)
+        })
+    }
+}
+</file>
+
+<file path="internal/db/main_store_test.go">
+package db
+
+import (
+	"aita/internal/pkg/testutils"
+	"log"
+	"os"
+	"testing"
+)
+
+
+var (
+    testUserStore    *postgresUserStore
+    testSessionStore *postgresSessionStore
+    testTweetStore   *postgresTweetStore
+    testContext      *testutils.TestContext 
+)
+
+func TestMain(m *testing.M) {
+	tc, teardown := testutils.RunTestMain(m)
+	testContext = tc
+    log.Println("Migration successful!")
+	testUserStore = NewPostgresUserStore(testContext.TestDB)
+	testSessionStore = NewPostgresSessionStore(testContext.TestDB)
+	testTweetStore = NewPostgresTweetStore(testContext.TestDB)
+	testContext.CleanupTestDB()
+	exitCode := m.Run()
+	teardown()
+	os.Exit(exitCode)
+}
+</file>
+
+<file path="internal/db/user_store.go">
+package db
+
+import (
+	"aita/internal/models"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+
+	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
+)
+
+type postgresUserStore struct {
+	database *sqlx.DB
+}
+
+func NewPostgresUserStore(DB *sqlx.DB) *postgresUserStore {
+	return &postgresUserStore{database: DB}
+}
+
+func (s *postgresUserStore) Create(ctx context.Context, user *models.User) (*models.User, error) {
+	query := `INSERT INTO users(username, email, password_hash) 
+			  VALUES ($1, $2, $3) 
+			  RETURNING id, username, email, password_hash, created_at`
+
+	var newUser models.User
+	err := s.database.QueryRowContext(
+		ctx,
+		query,
+		user.Username,
+		user.Email,
+		user.PasswordHash,
+	).Scan(
+		&newUser.ID,
+		&newUser.Username,
+		&newUser.Email,
+		&newUser.PasswordHash,
+		&newUser.CreatedAt,
+	)
+
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			switch pqErr.Code {
+			case errCodeUniqueViolation:
+				switch pqErr.Constraint {
+				case constraintUsernameK:
+					return nil, errcode.ErrUsernameConflict
+				case constraintUseremailK:
+					return nil, errcode.ErrEmailConflict
+				}
+			case errCodeStringDataRightTruncation:
+				return nil, errcode.ErrValueTooLong
+			}
+		}
+		return nil, fmt.Errorf("ユーザーの生成に失敗しました: %w", err)
+	}
+
+	newUser.CreatedAt = newUser.CreatedAt.UTC()
+	return &newUser, nil
+}
+
+func (s *postgresUserStore) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	var newUser models.User
+	query := `SELECT id, username, email, password_hash, created_at FROM users WHERE email = $1`
+	err := s.database.GetContext(ctx, &newUser, query, email)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errcode.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("emailによるユーザー取得に失敗しました: %w", err)
+	}
+
+	newUser.CreatedAt = newUser.CreatedAt.UTC()
+	return &newUser, nil
+}
+
+func (s *postgresUserStore) GetByID(ctx context.Context, id int64) (*models.User, error) {
+	var newUser models.User
+	query := `SELECT id, username, email, password_hash,created_at FROM users WHERE id = $1`
+	err := s.database.GetContext(ctx, &newUser, query, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errcode.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("userIDによるユーザー取得に失敗しました: %w", err)
+	}
+
+	newUser.CreatedAt = newUser.CreatedAt.UTC()
+	return &newUser, nil
+}
+</file>
+
+<file path="tests/main_test.go">
+package tests
+
+import (
+	"aita/internal/db"
+	"aita/internal/pkg/crypto"
+	"aita/internal/pkg/testutils"
+	"aita/internal/service"
+	"log"
+	"os"
+	"testing"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+var (
+	testUserStore    service.UserStore       
+	testSessionStore service.SessionStore
+	testTweetStore   service.TweetStore
+	testTokemanager  service.TokenManager
+	testHasher       service.PasswordHasher
+	testContext      *testutils.TestContext
+)
+
+func TestMain(m *testing.M) {
+	tc, teardown := testutils.RunTestMain(m)
+	testContext = tc
+	log.Println("Database migration successful!")
+
+	testHasher = crypto.NewBcryptHasher(bcrypt.DefaultCost)
+	testTokemanager = crypto.NewTokenManager()
+
+	testUserStore = db.NewPostgresUserStore(testContext.TestDB)
+	testSessionStore = db.NewPostgresSessionStore(testContext.TestDB)
+	testTweetStore = db.NewPostgresTweetStore(testContext.TestDB)
+	
+	
+    testContext.CleanupTestDB()
+
+	exitCode := m.Run()
+
+	teardown()
+	os.Exit(exitCode)
+}
+</file>
+
+<file path="tests/user_flow_test.go">
+package tests
+
+import (
+	"aita/internal/api"
+	"aita/internal/models"
+	"aita/internal/service"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestUserLifeCycleIntegration(t *testing.T) {
+	testContext.CleanupTestDB()
+	userService  := service.NewUserService(testUserStore, testHasher)
+	sessionService := service.NewSessionService(testSessionStore, userService, testTokemanager)
+	tweetService := service.NewTweetService(testTweetStore)
+	userHandler := api.NewUserHandler(userService, sessionService)
+	tweetHandler := api.NewTweetHandler(tweetService)
+
+
+	gin.SetMode(gin.TestMode)
+	r := api.SetupRouter(userHandler, tweetHandler,sessionService)
+	signupPayload := dto.SignupRequest{
+		Username: "frontend_dev",
+		Email: "dev@aita.com",
+		Password: "password123",
+	}
+	jsonSignup, _ := json.Marshal(signupPayload)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/signup", bytes.NewBuffer(jsonSignup))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Contains(t, w.Body.String(), "frontend_dev")
+
+	loginPayload := dto.LoginRequest{
+		Email: "dev@aita.com",
+		Password: "password123",
+	}
+	jsonLogin, _ := json.Marshal(loginPayload)
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewBuffer(jsonLogin))
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var loginResp struct {
+    	Data struct {
+       		Token string `json:"session_token"`
+    	} `json:"data"`
+	}
+	err := json.Unmarshal(w.Body.Bytes(), &loginResp)
+	require.NoError(t, err)
+	token := loginResp.Data.Token
+	require.NotEmpty(t, token)
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer " + token)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	fmt.Println("Body:", w.Body.String())
+	assert.Contains(t, w.Body.String(), "frontend_dev")
+	
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+</file>
+
+<file path="internal/api/router.go">
+package api
+
+import (
+	"github.com/gin-gonic/gin"
+)
+
+func SetupRouter(
+	userHandler *UserHandler, 
+	tweetHandler *TweetHandler, 
+	sessionService AuthSessionService ,
+	) *gin.Engine {
+	router := gin.Default()
+	v1 := router.Group("/api/v1")
+	{
+		v1.POST("/signup", userHandler.SignUp)
+		v1.POST("/login", userHandler.Login)
+		protected := v1.Group("/")
+		protected.Use(AuthMiddleware(sessionService))
+		{
+			protected.GET("/me", userHandler.GetMe)
+			protected.POST("/logout", userHandler.Logout)
+			tweets := protected.Group("/tweets")
+			{
+				tweets.POST("", tweetHandler.Create)
+			}
+		} 
+	}
+	return router
+}
+</file>
+
+<file path="internal/api/user_handler.go">
+package api
+
+import (
+	"aita/internal/contextkeys"
+	"aita/internal/models"
+	"context"
+
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+type UserService interface {
+	Register(ctx context.Context, req *dto.SignupRequest) (*models.User, error)
+	Login(ctx context.Context, email, password string) (*models.User, error) 
+	ToMyPage(ctx context.Context, id int64) (*models.User, error)             
+}
+
+type SessionManageer interface {
+    Issue(ctx context.Context, userID int64) (*models.IssueResponse, error)
+    Revoke(ctx context.Context, token string) error 
+}
+
+type UserHandler struct {
+	userService    UserService
+	sessionService SessionManageer
+}
+
+func NewUserHandler(usvc UserService, sm SessionManageer) *UserHandler {
+	return &UserHandler{
+		userService:    usvc,
+		sessionService: sm,
+	}
+}
+
+func (h *UserHandler) respondWithToken(c *gin.Context, user *models.User, statusCode int) {
+	issueResponse, err := h.sessionService.Issue(c.Request.Context(), user.ID)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	loginData := models.LoginResponse{
+        SessionToken: issueResponse.Token,
+        User:         dto.NewUserResponse(user),
+    }
+    c.JSON(statusCode, dto.Success(loginData))
+}
+
+func (h *UserHandler) SignUp(c *gin.Context) {
+     var req dto.SignupRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        appErr := dto.FilterBindError(err)
+        c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+        return
+    }
+
+    user, err := h.userService.Register(c.Request.Context(), &req)
+    if err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+    
+    h.respondWithToken(c, user, http.StatusCreated)
+}
+
+func (h *UserHandler) Login(c *gin.Context) {
+    var req dto.LoginRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        appErr := dto.FilterBindError(err)
+        c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+        return  
+    }
+
+    user, err := h.userService.Login(c.Request.Context(), req.Email, req.Password)
+    if err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+
+    h.respondWithToken(c, user, http.StatusOK)
+}
+
+func (h *UserHandler) GetMe(c *gin.Context) {
+    val, exists := c.Get(contextkeys.AuthPayloadKey)
+    userID, ok := val.(int64)
+    if !exists || !ok {
+        err := errcode.ErrSessionNotFound
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+
+    user, err := h.userService.ToMyPage(c.Request.Context(), userID)
+    if err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+
+    c.JSON(http.StatusOK, dto.Success(dto.NewUserResponse(user)))
+}
+
+func (h *UserHandler) Logout(c *gin.Context) {
+    authHeader := c.GetHeader("Authorization")
+
+    if err := h.sessionService.Revoke(c.Request.Context(), authHeader); err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+    }
+
+    c.JSON(http.StatusOK, dto.SuccessMsg("ログアウトしました"))
+}
+</file>
+
+<file path="README.md">
+AITA - 高性能ソーシャルメディア・バックエンドプラットフォーム
+
+AITAは、Go (Golang) で構築された、高並列・スケーラブルなSNSバックエンドのプロトタイプです。大規模なユーザー利用シーンを想定し、高速な認証、リアルタイムな情報配信、高度な全文検索の実装に焦点を当てています。
+
+開発状況 (Development Status)
+
+このプロジェクトは現在、フェーズ 1（コア機能の実装）を完了し、フェーズ2（パフォーマンス最適化）に移行しています。
+
+フェーズ 1 (完了): ユーザー認証システム、データベース基盤の構築。ユーザー作成と認証のユニットテストと結合テスト作成
+
+フェーズ 2 (進行中): Redisによる非同期処理、ツイート投稿機能の実装。
+
+フェーズ 3 (予定): Elasticsearchによる検索エンジンの統合。
+
+技術スタック
+
+言語: Go 1.21+
+
+Webフレームワーク: Gin Gonic
+
+データベース: PostgreSQL (sqlxによる効率的なマッピング)
+
+キャッシュ / メッセージキュー: Redis (Session管理、Redis Streams予定)
+
+検索エンジン: Elasticsearch (導入予定)
+
+インフラ: Docker & Docker Compose
+
+認証: Bcryptハッシュパスワード + 独自Session Token
+
+主な機能
+
+実装済み (Implemented)
+
+セッション認証システム:
+標準的なBcryptによるパスワード暗号化に加え、セッションベースの認可処理を実装。
+
+クリーンアーキテクチャ:
+cmd/, internal/ をベースとしたディレクトリ構成を採用。レイヤードアーキテクチャにより疎結合を確保。
+
+開発予定 (Upcoming)
+
+高並列アーキテクチャ (Write Fan-out):
+Redis Streamsを利用した非同期タスク処理により、タイムライン配信を高速化。
+
+高度な全文検索:
+Elasticsearchを統合し、投稿内容の高速検索を提供。
+
+プロジェクト構成
+
+.
+├── cmd
+│   └── api/           #　メインプログラム (main.go)
+├── internal/
+│   ├── api/           #　HTTPハンドラー, ルーティング, ミドルウェア
+│   ├── config         #　設定情報の読み込み (env, yaml)
+│   ├── contextkeys    #　
+│   ├── db/            #　ストレージ実装 (Postgres/Redis/ES)
+│   ├── models/        #　データモデル定義
+│   ├── pkg/
+│   │    ├── crypto    #
+│   │    ├── testutils #　ユニットテストの補助関数（ヘルパー）
+│   │    └── utils     #
+│   └── service        #  テートデータベース作成
+├── scripts
+│   └── init-db        #  DB環境構築用スクリプト（Docker起動など）
+├── migrations/        #　SQLマイグレーションファイル
+└── tests/             #　結合テスト (＊作成中＊)
+
+
+今後のロードマップ
+
+[x] ユーザー登録・ログインAPIの実装。
+
+[x] データベースマイグレーションツールの導入。
+
+[x] DB層のトークン機能とユーザー機能のユニットテスト
+
+[ ] ツイート投稿機能の実装。
+
+[ ] Redisによるタイムライン（Feed）のキャッシュ最適化。
+
+[ ] Elasticsearchを用いた投稿内容の全文検索。
+
+[ ] Google Cloud Storage (GCS) を利用した画像アップロード。
+</file>
+
+<file path="cmd/api/main.go">
+package main
+
+import (
+	"aita/internal/api"
+	"aita/internal/config"
+	"aita/internal/db"
+	"aita/internal/pkg/crypto"
+	"aita/internal/service"
+	"log"
+
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
+)
+
+
+func main() {
+	config := config.LoadConfig()
+	database, err:= sqlx.Connect("postgres",config.DBConnStr)
+	if err!= nil {
+		log.Fatal("データベースに接続できません",err)
+	}
+	defer database.Close()
+	log.Printf("データベースへの接続に成功しました")
+	
+	hasher := crypto.NewBcryptHasher(bcrypt.DefaultCost)
+	tokenmanager := crypto.NewTokenManager()
+	userStore := db.NewPostgresUserStore(database)
+	sessionStore := db.NewPostgresSessionStore(database)
+	tweetStore := db.NewPostgresTweetStore(database)
+	userService := service.NewUserService(userStore, hasher)
+	sessionService := service.NewSessionService(sessionStore, userService, tokenmanager)
+	tweetService := service.NewTweetService(tweetStore)
+	userHandler := api.NewUserHandler(userService, sessionService)
+	tweetHandler := api.NewTweetHandler(tweetService)
+
+	router := api.SetupRouter(userHandler, tweetHandler, sessionService)
+
+
+	log.Printf("サーバーが起動し、ポート%sで待機中です",config.ServerAddress)
+	if err :=router.Run(config.ServerAddress); err != nil{
+		log.Fatal("サーバーの起動に失敗しました",err)
+	}
+}
+</file>
+
+<file path="internal/models/tweet.go">
+package models
+
+import(
+	"time"
+)
+
+type Tweet struct{
+	ID            int64        `db:"id"`
+	UserID        int64		   `db:"user_id"`
+	Content       string       `db:"content"`
+	ImageURL     *string       `db:"image_url"`
+	CreatedAt     time.Time    `db:"created_at"` 
+}
+
+type CreateTweetRequest struct {
+	Content		 string        `json:"content" binding:"max=1000"`
+	ImageURL    *string        `json:"image_url" binding:"omitempty,url"`
+}
+
+type TweetResponse struct{
+	ID            int64        `json:"id"`
+	UserID        int64		   `json:"user_id"`
+	Content       string       `json:"content"`
+	ImageURL     *string       `json:"image_url"`
+	CreatedAt     time.Time    `json:"created_at"` 
+}
+
+func NewTweetResponse(tweet *Tweet) TweetResponse {
+	return TweetResponse{
+		ID: 		tweet.ID,
+		UserID:     tweet.UserID,
+		Content:    tweet.Content,
+		ImageURL:   tweet.ImageURL,
+		CreatedAt:  tweet.CreatedAt,
+	}
+}
+</file>
+
+</files>

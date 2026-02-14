@@ -2,7 +2,7 @@ package tests
 
 import (
 	"aita/internal/api"
-	"aita/internal/models"
+	"aita/internal/dto"
 	"aita/internal/service"
 	"bytes"
 	"encoding/json"
@@ -18,18 +18,17 @@ import (
 
 func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
-	userService  := service.NewUserService(testUserStore, testHasher)
+	userService := service.NewUserService(testUserStore, testHasher)
 	sessionService := service.NewSessionService(testSessionStore, userService, testTokemanager)
 	tweetService := service.NewTweetService(testTweetStore)
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
 
-
 	gin.SetMode(gin.TestMode)
-	r := api.SetupRouter(userHandler, tweetHandler,sessionService)
-	signupPayload := models.SignupRequest{
+	r := api.SetupRouter(userHandler, tweetHandler, sessionService)
+	signupPayload := dto.SignupRequest{
 		Username: "frontend_dev",
-		Email: "dev@aita.com",
+		Email:    "dev@aita.com",
 		Password: "password123",
 	}
 	jsonSignup, _ := json.Marshal(signupPayload)
@@ -40,8 +39,8 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 	assert.Contains(t, w.Body.String(), "frontend_dev")
 
-	loginPayload := models.LoginRequest{
-		Email: "dev@aita.com",
+	loginPayload := dto.LoginRequest{
+		Email:    "dev@aita.com",
 		Password: "password123",
 	}
 	jsonLogin, _ := json.Marshal(loginPayload)
@@ -51,9 +50,9 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var loginResp struct {
-    	Data struct {
-       		Token string `json:"session_token"`
-    	} `json:"data"`
+		Data struct {
+			Token string `json:"session_token"`
+		} `json:"data"`
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &loginResp)
 	require.NoError(t, err)
@@ -62,14 +61,14 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest(http.MethodGet, "/api/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer " + token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	fmt.Println("Body:", w.Body.String())
 	assert.Contains(t, w.Body.String(), "frontend_dev")
-	
+
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}	
+}

@@ -10,30 +10,24 @@ type Tweet struct{
 	Content       string       `db:"content"`
 	ImageURL     *string       `db:"image_url"`
 	CreatedAt     time.Time    `db:"created_at"` 
+	UpdatedAt     time.Time    `db:"updated_at"`
+	IsEdited      bool         `db:"is_edited"`
 }
 
-type CreateTweetRequest struct {
-	Content		 string        `json:"content" binding:"max=1000"`
-	ImageURL    *string        `json:"image_url" binding:"omitempty,url"`
-}
 
-type TweetResponse struct{
-	ID            int64        `json:"id"`
-	UserID        int64		   `json:"user_id"`
-	Content       string       `json:"content"`
-	ImageURL     *string       `json:"image_url"`
-	CreatedAt     time.Time    `json:"created_at"` 
-}
 
-func NewTweetResponse(tweet *Tweet) TweetResponse {
-	return TweetResponse{
-		ID: 		tweet.ID,
-		UserID:     tweet.UserID,
-		Content:    tweet.Content,
-		ImageURL:   tweet.ImageURL,
-		CreatedAt:  tweet.CreatedAt,
+
+
+func(t *Tweet) CanBeUpdated() bool {
+	if t == nil {
+		return false
 	}
+
+	duration := time.Now().UTC().Sub(t.CreatedAt.UTC())
+	
+	return duration <= editWindow
 }
+
 
 
 

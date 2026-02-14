@@ -1,0 +1,1 @@
+ALTER TABLE tweets DROP COLUMN is_edited;

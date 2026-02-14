@@ -4,10 +4,6 @@ import(
 	"time"
 )
 
-const (
-	MaxSessionLife = 7 * 24 * time.Hour
-	SessionDuration = 24 * time.Hour
-)
 
 type Session struct{
 	ID            int64        `db:"id"`
@@ -15,11 +11,6 @@ type Session struct{
 	TokenHash     string       `db:"token_hash"`
 	ExpiresAt     time.Time    `db:"expires_at"`
 	CreatedAt     time.Time    `db:"created_at"`
-}
-
-type IssueResponse struct {
-    Session  *Session
-    Token string
 }
 
 func(s *Session) IsExpired() bool {

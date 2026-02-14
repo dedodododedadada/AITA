@@ -54,8 +54,8 @@ func(m *mockSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt time.Ti
 	return args.Error(0)
 }
 
-func(m *mockSessionStore) DeleteByHash(ctx context.Context, tokenHash string) error {
-	args := m.Called(ctx,tokenHash)
+func(m *mockSessionStore) DeleteBySessionID(ctx context.Context, sessionID int64) error {
+	args := m.Called(ctx,sessionID)
 	return args.Error(0)
 }
 
@@ -68,6 +68,21 @@ func (m *mockTweetStore) CreateTweet(ctx context.Context, twt *models.Tweet) (*m
 	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
 }
 
+func(m *mockTweetStore) GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error) {
+	args := m.Called(ctx, tweetID)
+	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+}
+
+func(m *mockTweetStore) UpdateContent(ctx context.Context, newContent string,  tweetID int64) (*models.Tweet, error) {
+	args := m.Called(ctx, newContent, tweetID)
+	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+}
+
+
+func(m *mockTweetStore) DeleteTweet(ctx context.Context, tweetID int64) error {
+	args := m.Called(ctx, tweetID)
+	return args.Error(0)
+}
 
 type mockBcryptHasher struct {
 	mock.Mock

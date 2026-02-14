@@ -1,10 +1,12 @@
 package testutils
 
 import (
-	"aita/internal/config"
+	"aita/internal/configuration"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -19,6 +21,7 @@ type TestContext struct {
 	DSN string
 }
 
+// データベースのオフライン状態を擬似的に再現する
 func OpenDB(dsn string) (*sqlx.DB, error) {
 	db, err := sqlx.Open("postgres", dsn)
 	if err != nil {
@@ -37,13 +40,27 @@ func  (ctx *TestContext) CleanupTestDB() {
 }
 func RunTestMain(m *testing.M) (*TestContext, func()) {
 	os.Setenv("APP_ENV", "test")
-	cfg := config.LoadConfig()
+
+	cfg := configuration.LoadConfig()
+
 	db, err := sqlx.Connect("postgres", cfg.DBConnStr)
 	if err != nil {
 		log.Fatalf("テストデータベースに接続できません (%.50s...): %v", cfg.DBConnStr, err)
 	}
-	migrationDir := config.GetPath("migrations")
-	migrationURL := "file://" + filepath.ToSlash(migrationDir)
+
+	migrationDir := configuration.GetPath("migrations")
+	absPath, _ := filepath.Abs(migrationDir)
+	cleanPath :=  filepath.ToSlash(absPath)
+
+	var migrationURL string
+
+	if runtime.GOOS == "windows" {
+		migrationURL = "file://" + strings.TrimPrefix(cleanPath, "/")
+	} else {
+		migrationURL = "file://" + cleanPath
+	}
+	log.Printf("Migration URL: %s", migrationURL)
+
 	mig, err := migrate.New(
         migrationURL, 
         cfg.DBConnStr,

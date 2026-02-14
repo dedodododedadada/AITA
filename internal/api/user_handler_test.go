@@ -2,6 +2,8 @@ package api
 
 import (
 	"aita/internal/contextkeys"
+	"aita/internal/dto"
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"bytes"
 	"encoding/json"
@@ -9,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -26,75 +29,99 @@ func TestSignUp(t *testing.T) {
 	}{
 		{
 			name: "ユーザー登録成功",
-			requestBody: models.SignupRequest{
+			requestBody: dto.SignupRequest{
 				Username: "mock_user",
 				Email:    "taro@example.com",
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				user := &models.User{ID: 1, Username: "mock_User"}
-				mu.On("Register", mock.Anything, mock.Anything).Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return(&models.IssueResponse{Token: "valid_token_string"}, nil)
+				user := &models.User{
+					ID: 1,
+					Username: "mock_User",
+					Email: "taro@example.com",
+					PasswordHash: "password123hash",
+					CreatedAt: time.Now().UTC(),
+				}
+				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
+					return username == "mock_user"
+				}), mock.MatchedBy(func(email string) bool{
+					return email == "taro@example.com"
+				}), mock.MatchedBy(func(password string) bool {
+					return password == "password123"
+				})).Return(user, nil)
+				ms.On("Issue", mock.Anything, user.ID).Return("valid_token_string", nil)
 			},
 			expectedStatus: http.StatusCreated,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
-				json.Unmarshal(w.Body.Bytes(), &resp)				
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "valid_token_string", data["session_token"])
 			},
 		},
 		{
-			name:        "リクエスト形式不正: 無効なJSONを送信した場合",
-			requestBody: `{"username": "incomplete_json`, 
-			setupMock:   func(mu *mockUserService, ms *mockSessionService) {},
+			name:           "リクエスト形式不正: 無効なJSONを送信した場合",
+			requestBody:    `{"username": "incomplete_json`,
+			setupMock:      func(mu *mockUserService, ms *mockSessionService) {},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
-				
+
 				assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
 				assert.Equal(t, "JSONの構文が正しくありません", resp.Error)
 			},
 		},
 		{
 			name: "バリデーションエラー：メールアドレス重複",
-			requestBody: models.SignupRequest{
+			requestBody: dto.SignupRequest{
 				Username: "mock_user",
 				Email:    "exists@example.com",
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				mu.On("Register", mock.Anything, mock.Anything).Return(nil, models.ErrEmailConflict)
+				mu.On("Register", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, errcode.ErrEmailConflict)
 			},
 			expectedStatus: http.StatusConflict,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
-				
+
 				assert.Equal(t, "EMAIL_CONFLICT", resp.Code)
 				assert.Contains(t, resp.Error, "既に使用されています")
 			},
 		},
 		{
-            name: "セッション発行失敗",
-            requestBody: models.SignupRequest{
-                Username: "error_user",
-                Email:    "issue_fail@test.com",
-                Password: "password123",
-            },
-            setupMock: func(mu *mockUserService, ms *mockSessionService) {
-                user := &models.User{ID: 50, Username: "error_user"}
-                mu.On("Register", mock.Anything, mock.Anything).Return(user, nil)
-                ms.On("Issue", mock.Anything, int64(50)).Return(nil, errors.New("redis connection failed"))
-            },
-            expectedStatus: http.StatusInternalServerError, 
-            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-                var resp models.Response
-                json.Unmarshal(w.Body.Bytes(), &resp)
-                assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
-            },
-        },
+			name: "セッション発行失敗",
+			requestBody: dto.SignupRequest{
+				Username: "error_user",
+				Email:    "issue_fail@test.com",
+				Password: "password123",
+			},
+			setupMock: func(mu *mockUserService, ms *mockSessionService) {
+				user := &models.User{
+					ID: 50, 
+					Username: "error_user",
+					Email:    "issue_fail@test.com",
+					PasswordHash: "password123hashed",
+					CreatedAt: time.Now().UTC(),
+				}
+				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
+					return username == "error_user"
+				}), mock.MatchedBy(func(email string) bool{
+					return email == "issue_fail@test.com"
+				}), mock.MatchedBy(func(password string) bool {
+					return password == "password123"
+				})).Return(user, nil)
+				ms.On("Issue", mock.Anything, int64(50)).Return("", errors.New("redis connection failed"))
+			},
+			expectedStatus: http.StatusInternalServerError,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -135,46 +162,46 @@ func TestLogin(t *testing.T) {
 	}{
 		{
 			name: "ログイン成功",
-			requestBody: models.LoginRequest{
+			requestBody: dto.LoginRequest{
 				Email:    "test@example.com",
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &models.User{ID: 1, Email: "test@example.com"}
 				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return(&models.IssueResponse{Token: "login_token_abc"}, nil)
+				ms.On("Issue", mock.Anything, user.ID).Return("login_token_abc", nil)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "login_token_abc", data["session_token"])
 			},
 		},
 		{
-			name: "JSON構文エラー",
-			requestBody: `{"email": "bad-json"...`, 
-			setupMock:   func(mu *mockUserService, ms *mockSessionService) {},
+			name:           "JSON構文エラー",
+			requestBody:    `{"email": "bad-json"...`,
+			setupMock:      func(mu *mockUserService, ms *mockSessionService) {},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
 			},
 		},
 		{
 			name: "メールアドレスまたはパスワードが間違っている場合",
-			requestBody: models.LoginRequest{
+			requestBody: dto.LoginRequest{
 				Email:    "wrong@example.com",
 				Password: "wrongpassword",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				mu.On("Login", mock.Anything, mock.Anything, mock.Anything).Return(nil, models.ErrInvalidCredentials)
+				mu.On("Login", mock.Anything, mock.Anything, mock.Anything).Return(nil, errcode.ErrInvalidCredentials)
 			},
-			expectedStatus: http.StatusUnauthorized, 
+			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "INVALID_CREDENTIALS", resp.Code)
 				assert.Contains(t, resp.Error, "正しくありません")
@@ -182,18 +209,18 @@ func TestLogin(t *testing.T) {
 		},
 		{
 			name: "トークン発行失敗",
-			requestBody: models.LoginRequest{
+			requestBody: dto.LoginRequest{
 				Email:    "test@example.com",
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &models.User{ID: 1, Email: "test@example.com"}
 				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return(nil, errors.New("internal server error"))
+				ms.On("Issue", mock.Anything, user.ID).Return("", errors.New("internal server error"))
 			},
-			expectedStatus: http.StatusInternalServerError, 
+			expectedStatus: http.StatusInternalServerError,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
 			},
@@ -239,28 +266,28 @@ func TestGetMe(t *testing.T) {
 		{
 			name: "マイページ取得成功",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, int64(100))
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 101, SessionID: 104})
 			},
 			setupMock: func(mu *mockUserService) {
-				user := &models.User{ID: 100, Username: "test_user", Email: "test@example.com"}
-				mu.On("ToMyPage", mock.Anything, int64(100)).Return(user, nil)
+				user := &models.User{ID: 101, Username: "test_user", Email: "test@example.com"}
+				mu.On("ToMyPage", mock.Anything, int64(101)).Return(user, nil)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "test_user", data["username"])
-				assert.Equal(t, float64(100), data["id"]) 
+				assert.EqualValues(t, 101, data["id"])
 			},
 		},
 		{
-			name: "未認証エラー",
-			setupContext: func(c *gin.Context) {},
+			name:           "未認証エラー",
+			setupContext:   func(c *gin.Context) {},
 			setupMock:      func(mu *mockUserService) {},
 			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "SESSION_NOT_FOUND", resp.Code)
 			},
@@ -268,14 +295,14 @@ func TestGetMe(t *testing.T) {
 		{
 			name: "ユーザー不在",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, int64(404))
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 404, SessionID: 104})
 			},
 			setupMock: func(mu *mockUserService) {
-				mu.On("ToMyPage", mock.Anything, int64(404)).Return(nil, models.ErrUserNotFound)
+				mu.On("ToMyPage", mock.Anything, int64(404)).Return(nil, errcode.ErrUserNotFound)
 			},
-			expectedStatus: http.StatusNotFound, 
+			expectedStatus: http.StatusNotFound,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp models.Response
+				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "USER_NOT_FOUND", resp.Code)
 			},
@@ -285,7 +312,7 @@ func TestGetMe(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mu := new(mockUserService)
-			h := NewUserHandler(mu, nil) 
+			h := NewUserHandler(mu, nil)
 			tt.setupMock(mu)
 
 			w := httptest.NewRecorder()
@@ -304,66 +331,75 @@ func TestGetMe(t *testing.T) {
 	}
 }
 
-func TestUserHandler_Logout(t *testing.T) {
-    mockSvc := new(mockSessionService) 
-    handler := NewUserHandler(nil, mockSvc)
+func TestUserHandlerLogout(t *testing.T) {
 
     gin.SetMode(gin.TestMode)
 
-    validHeader := "Bearer valid_token_string_32_chars_long"
+    const testSessionID int64 = 999
 
     tests := []struct {
         name           string
-        authHeader     string
-        setupMock      func()
+        setupContext   func(c *gin.Context)
+        setupMock      func(ms *mockSessionService)
         expectedStatus int
         expectMsg      string
     }{
         {
-            name:       "ログアウト成功",
-            authHeader: validHeader,
-            setupMock: func() {
-                mockSvc.On("Revoke", mock.Anything, validHeader).Return(nil)
+            name: "ログアウト成功",
+            setupContext: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
+                    SessionID: testSessionID,
+                })
+            },
+            setupMock: func(ms *mockSessionService) {
+                ms.On("Revoke", mock.Anything, testSessionID).Return(nil)
             },
             expectedStatus: http.StatusOK,
             expectMsg:      "ログアウトしました",
         },
         {
-            name:       "セッションが見つからない（不正なトークン形式など）",
-            authHeader: "InvalidHeader",
-            setupMock: func() {
-                mockSvc.On("Revoke", mock.Anything, "InvalidHeader").Return(models.ErrSessionNotFound)
-            },
-            expectedStatus: http.StatusUnauthorized, 
+            name: "セッションが見たからない",
+            setupContext: func(c *gin.Context) {},
+            setupMock:      func(ms *mockSessionService) {},
+            expectedStatus: http.StatusUnauthorized,
         },
         {
-            name:       "サーバー内部エラー",
-            authHeader: validHeader,
-            setupMock: func() {
-                mockSvc.On("Revoke", mock.Anything, validHeader).Return(errors.New("db error"))
+            name: "サーバー内部エラー",
+            setupContext: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
+                    SessionID: testSessionID,
+                })
             },
-            expectedStatus: http.StatusInternalServerError,
+            setupMock: func(ms *mockSessionService) {
+                ms.On("Revoke", mock.Anything, testSessionID).Return(errcode.ErrSessionNotFound)
+            },
+            expectedStatus: http.StatusUnauthorized,
         },
     }
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            mockSvc.ExpectedCalls = nil
-
-            tt.setupMock()
+            
+			ms := new(mockSessionService)
+			h := NewUserHandler(nil, ms)
+			
+			tt.setupMock(ms)
 
             w := httptest.NewRecorder()
             c, _ := gin.CreateTestContext(w)
-            
+
             c.Request, _ = http.NewRequest(http.MethodPost, "/logout", nil)
-            c.Request.Header.Set("Authorization", tt.authHeader)
-            handler.Logout(c)
+        
+            tt.setupContext(c)
+
+            h.Logout(c)
 
             assert.Equal(t, tt.expectedStatus, w.Code)
             if tt.expectMsg != "" {
                 assert.Contains(t, w.Body.String(), tt.expectMsg)
             }
-            mockSvc.AssertExpectations(t)
+
+            ms.AssertExpectations(t)
         })
     }
 }

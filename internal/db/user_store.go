@@ -1,6 +1,7 @@
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"database/sql"
@@ -46,12 +47,12 @@ func (s *postgresUserStore) Create(ctx context.Context, user *models.User) (*mod
 			case errCodeUniqueViolation:
 				switch pqErr.Constraint {
 				case constraintUsernameK:
-					return nil, models.ErrUsernameConflict
+					return nil, errcode.ErrUsernameConflict
 				case constraintUseremailK:
-					return nil, models.ErrEmailConflict
+					return nil, errcode.ErrEmailConflict
 				}
 			case errCodeStringDataRightTruncation:
-				return nil, models.ErrValueTooLong
+				return nil, errcode.ErrValueTooLong
 			}
 		}
 		return nil, fmt.Errorf("ユーザーの生成に失敗しました: %w", err)
@@ -67,7 +68,7 @@ func (s *postgresUserStore) GetByEmail(ctx context.Context, email string) (*mode
 	err := s.database.GetContext(ctx, &newUser, query, email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, models.ErrUserNotFound
+			return nil, errcode.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("emailによるユーザー取得に失敗しました: %w", err)
 	}
@@ -82,7 +83,7 @@ func (s *postgresUserStore) GetByID(ctx context.Context, id int64) (*models.User
 	err := s.database.GetContext(ctx, &newUser, query, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, models.ErrUserNotFound
+			return nil, errcode.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("userIDによるユーザー取得に失敗しました: %w", err)
 	}
@@ -90,4 +91,3 @@ func (s *postgresUserStore) GetByID(ctx context.Context, id int64) (*models.User
 	newUser.CreatedAt = newUser.CreatedAt.UTC()
 	return &newUser, nil
 }
-

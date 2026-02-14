@@ -1,6 +1,7 @@
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"context"
@@ -17,9 +18,9 @@ func TestCreate(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "henry",
-		Email: "text@example.com",
-		PasswordHash:"hashedpassword",
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "hashedpassword",
 	}
 
 	createdUser, err := testUserStore.Create(ctx, initUser)
@@ -38,33 +39,33 @@ func TestCreateWhileConflict(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "henry",
-		Email: "text@example.com",
-		PasswordHash:"hashedpassword",
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "hashedpassword",
 	}
 	_, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
 
 	t.Run("23505: ユーザー名の競合", func(t *testing.T) {
 		newUser := &models.User{
-			Username: "henry",
-			Email: "other@example.com",
+			Username:     "henry",
+			Email:        "other@example.com",
 			PasswordHash: "secretpassword",
 		}
 		createdUser, err := testUserStore.Create(ctx, newUser)
 
-		assert.ErrorIs(t, err, models.ErrUsernameConflict, "エラーはErrUsernameConflictであるべきです")
+		assert.ErrorIs(t, err, errcode.ErrUsernameConflict, "エラーはErrUsernameConflictであるべきです")
 		assert.Nil(t, createdUser, "エラー時、生成されたユーザーはnilであるべきです")
-	})	
+	})
 
 	t.Run("23505: メールアドレスの競合", func(t *testing.T) {
 		newUser := &models.User{
-			Username: "Test_name",
-			Email: "text@example.com",
+			Username:     "Test_name",
+			Email:        "text@example.com",
 			PasswordHash: "secretpassword",
 		}
 		createdUser, err := testUserStore.Create(ctx, newUser)
-		assert.ErrorIs(t, err, models.ErrEmailConflict, "エラーはErrEmailConflictであるべきです")
+		assert.ErrorIs(t, err, errcode.ErrEmailConflict, "エラーはErrEmailConflictであるべきです")
 		assert.Nil(t, createdUser, "エラー時、生成されたユーザーはnilであるべきです")
 	})
 }
@@ -75,14 +76,14 @@ func TestCreateWhileAnotherErr(t *testing.T) {
 	ctx := context.Background()
 	t.Run("22001: 文字列長超過", func(t *testing.T) {
 		newUser := &models.User{
-			Username: strings.Repeat("u", 51),
-			Email: "long@example.com",
-			PasswordHash : "sercretpassword",
+			Username:     strings.Repeat("u", 51),
+			Email:        "long@example.com",
+			PasswordHash: "sercretpassword",
 		}
 		createdUser, err := testUserStore.Create(ctx, newUser)
-		assert.ErrorIs(t, err, models.ErrValueTooLong)
+		assert.ErrorIs(t, err, errcode.ErrValueTooLong)
 		assert.Nil(t, createdUser)
-		
+
 	})
 
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
@@ -93,9 +94,9 @@ func TestCreateWhileAnotherErr(t *testing.T) {
 		tempDB.Close()
 
 		newUser := &models.User{
-			Username: "henry",
-			Email: "text@example.com",
-			PasswordHash:"hashedpassword",
+			Username:     "henry",
+			Email:        "text@example.com",
+			PasswordHash: "hashedpassword",
 		}
 		createdUser, err := tempUserStore.Create(ctx, newUser)
 		require.Error(t, err, "内部エラーの場合、エラーを返すべきです")
@@ -110,9 +111,9 @@ func TestGetByEmail(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "henry",
-		Email: "get@example.com",
-		PasswordHash:"hashedpassword",
+		Username:     "henry",
+		Email:        "get@example.com",
+		PasswordHash: "hashedpassword",
 	}
 	createdUser, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
@@ -133,16 +134,16 @@ func TestGetByEmailWhileError(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "henry",
-		Email: "get@example.com",
-		PasswordHash:"hashedpassword",
+		Username:     "henry",
+		Email:        "get@example.com",
+		PasswordHash: "hashedpassword",
 	}
 	_, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
 
 	t.Run("ユーザーが存在しない", func(t *testing.T) {
 		unfoundUser, err := testUserStore.GetByEmail(ctx, "wrong@example.com")
-		assert.ErrorIs(t, err, models.ErrUserNotFound)
+		assert.ErrorIs(t, err, errcode.ErrUserNotFound)
 		assert.Nil(t, unfoundUser)
 	})
 
@@ -155,7 +156,7 @@ func TestGetByEmailWhileError(t *testing.T) {
 
 		unfoundUser, err := tempUserStore.GetByEmail(ctx, "get@example.com")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(),"emailによるユーザー取得に失敗しました")
+		assert.Contains(t, err.Error(), "emailによるユーザー取得に失敗しました")
 		t.Logf("エラーは: %v\n", err)
 		assert.Nil(t, unfoundUser)
 	})
@@ -166,8 +167,8 @@ func TestGetByID(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "testuser_for_id",
-		Email:    "getid@example.com",
+		Username:     "testuser_for_id",
+		Email:        "getid@example.com",
 		PasswordHash: "passwordHash",
 	}
 	createdUser, err := testUserStore.Create(ctx, initUser)
@@ -188,26 +189,26 @@ func TestGetByIDWhlieError(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "testuser_for_id",
-		Email:    "getid@example.com",
+		Username:     "testuser_for_id",
+		Email:        "getid@example.com",
 		PasswordHash: "passwordHash",
 	}
 	_, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
 	t.Run("ユーザーが存在しない", func(t *testing.T) {
 		unfoundUser, err := testUserStore.GetByID(ctx, 99999)
-		assert.ErrorIs(t, err, models.ErrUserNotFound, "エラーはErrNotFound であるべきです")
+		assert.ErrorIs(t, err, errcode.ErrUserNotFound, "エラーはErrNotFound であるべきです")
 		assert.Nil(t, unfoundUser, "見つかったユーザーオブジェクトは空であるべきです")
 	})
 
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
 		tempDB, err := testutils.OpenDB(testContext.DSN)
 		require.NoError(t, err)
-		
+
 		tempUserStore := NewPostgresUserStore(tempDB)
 		tempDB.Close()
 
-		unfoundUser, err := tempUserStore.GetByID(ctx,1)
+		unfoundUser, err := tempUserStore.GetByID(ctx, 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "IDによるユーザー取得に失敗しました")
 		t.Logf("エラーは: %v\n", err)

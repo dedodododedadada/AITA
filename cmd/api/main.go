@@ -2,7 +2,7 @@ package main
 
 import (
 	"aita/internal/api"
-	"aita/internal/config"
+	"aita/internal/configuration"
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
 	"aita/internal/service"
@@ -15,7 +15,7 @@ import (
 
 
 func main() {
-	config := config.LoadConfig()
+	config := configuration.LoadConfig()
 	database, err:= sqlx.Connect("postgres",config.DBConnStr)
 	if err!= nil {
 		log.Fatal("データベースに接続できません",err)

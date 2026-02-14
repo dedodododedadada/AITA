@@ -2,7 +2,6 @@ package db
 
 const (
 	errCodeStringDataRightTruncation = "22001"
-	errCodeNotNullViolation          = "23502"
 	errCodeForeignKeyViolation       = "23503"
 	errCodeUniqueViolation           = "23505"
 	constraintSessionUserFK          = "sessions_user_id_fkey"
