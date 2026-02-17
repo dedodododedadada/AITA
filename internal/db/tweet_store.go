@@ -16,8 +16,8 @@ type postgresTweetStore struct {
 	database *sqlx.DB
 }
 
-func NewPostgresTweetStore(DB *sqlx.DB) *postgresTweetStore {
-	return &postgresTweetStore{database: DB}
+func NewPostgresTweetStore(db *sqlx.DB) *postgresTweetStore {
+	return &postgresTweetStore{database: db}
 }
 
 func (s *postgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Tweet) (*models.Tweet, error) {

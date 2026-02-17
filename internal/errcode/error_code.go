@@ -18,6 +18,9 @@ var (
 	ErrInvalidUrlFormat      = errors.New("Will be written")
 	ErrInvalidTweetID        = errors.New("無効なツイートIDです")
 	ErrInvalidContentFormat  = errors.New("contentの形式が正しくありません(最大1000文字)")
+	ErrAlreadyFollowing      = errors.New("既にこのユーザーをフォローしています")
+	ErrCannotFollowSelf      = errors.New("自分自身をフォローすることはできません")
+    ErrNotFollowing          = errors.New("このユーザーをフォローしていません")
 
 	ErrValueTooLong = errors.New("入力内容が長すぎます")
 

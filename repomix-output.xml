@@ -44,15 +44,16 @@ The content is organized as follows:
 cmd/api/main.go
 docker-compose.yml
 go.mod
+internal/api/api_helper.go
 internal/api/middleware_test.go
 internal/api/middleware.go
 internal/api/mock_test.go
 internal/api/router.go
-internal/api/tweet_create_test.go
+internal/api/tweet_handler_test.go
 internal/api/tweet_handler.go
 internal/api/user_handler_test.go
 internal/api/user_handler.go
-internal/config/config.go
+internal/configuration/configuration.go
 internal/contextkeys/keys.go
 internal/db/const_db.go
 internal/db/main_store_test.go
@@ -63,12 +64,15 @@ internal/db/tweet_store_test.go
 internal/db/tweet_store.go
 internal/db/user_store_test.go
 internal/db/user_store.go
-internal/models/error.go
-internal/models/response.go
+internal/dto/authcontext.go
+internal/dto/mapper.go
+internal/dto/request.go
+internal/dto/response.go
+internal/errcode/error_code.go
+internal/models/const.go
 internal/models/session.go
 internal/models/tweet.go
 internal/models/user.go
-internal/models/validation.go
 internal/pkg/crypto/password.go
 internal/pkg/crypto/token.go
 internal/pkg/testutils/test_helper.go
@@ -87,6 +91,10 @@ migrations/000002_add_created_at_to_sessions.down.sql
 migrations/000002_add_created_at_to_sessions.up.sql
 migrations/000003_add_content_limit_to_tweets.down.sql
 migrations/000003_add_content_limit_to_tweets.up.sql
+migrations/000004_add_updated_at_to_tweets_table.down.sql
+migrations/000004_add_updated_at_to_tweets_table.up.sql
+migrations/000005_add_is_edited_to_tweets.down.sql
+migrations/000005_add_is_edited_to_tweets.up.sql
 README.md
 scripts/init-db/init.sql
 tests/main_test.go
@@ -95,6 +103,913 @@ tests/user_flow_test.go
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="internal/api/api_helper.go">
+package api
+
+import (
+	"aita/internal/contextkeys"
+	"aita/internal/dto"
+	"aita/internal/errcode"
+	"strconv"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+)
+
+func extractBearerToken(header string) (string, error) {
+	if header == "" {
+		return "", errcode.ErrSessionNotFound
+	}
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+		token := strings.TrimSpace(parts[1])
+		if token == "" {
+			return "", errcode.ErrSessionNotFound
+		}
+		return token, nil
+	}
+	return "", errcode.ErrSessionNotFound
+}
+
+func GetAuthContext(c *gin.Context) (*dto.AuthContext, error) {
+    val, ok := c.Get(contextkeys.AuthPayloadKey)
+    if !ok {
+        return nil, errcode.ErrSessionNotFound
+    }
+
+    auth, ok := val.(*dto.AuthContext)
+    if !ok || auth == nil {
+        return nil, errcode.ErrSessionNotFound
+    }
+
+    return auth, nil
+}
+
+func GetIDParam(c *gin.Context, name string)(int64, error) {
+	idStr := c.Param(name)
+	id, err :=strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errcode.ErrInvalidIDFormat
+	}
+	return id, nil
+}
+</file>
+
+<file path="internal/api/tweet_handler_test.go">
+package api
+
+import (
+	"aita/internal/contextkeys"
+	"aita/internal/dto"
+	"aita/internal/errcode"
+	"aita/internal/models"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+)
+
+func TestTweetCreate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name           string
+		requestBody    any
+		setupAuth      func(c *gin.Context)
+		setupMock      func(mt *mockTweetService)
+		expectedStatus int
+		checkResponse  func(t *testing.T, w *httptest.ResponseRecorder)
+	}{
+		{
+			name:        "ツイート投稿成功",
+			requestBody: dto.CreateTweetRequest{Content: "AITAの初投稿!"},
+			setupAuth: func(c *gin.Context) {
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
+			},
+			setupMock: func(mt *mockTweetService) {
+				mt.On(
+					"PostTweet", 
+					mock.Anything, 
+					int64(10),  
+					"AITAの初投稿!", 
+					mock.Anything,
+					).Return( &models.Tweet{
+					ID:        100,
+					Content:   "AITAの初投稿!",
+					UserID:    10,
+					CreatedAt: time.Now().UTC(),
+					UpdatedAt: time.Now().UTC(),
+				}, nil)
+			},
+			expectedStatus: http.StatusCreated,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				fmt.Println("Raw Response:", w.Body.String())
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				data := resp.Data.(map[string]any)
+				assert.EqualValues(t, 100, (data["id"]))
+				assert.Equal(t, "AITAの初投稿!", data["content"])
+			},
+		},
+		{
+			name:           "未認証エラー:ContextにIDがない",
+			requestBody:    dto.CreateTweetRequest{Content: "Hello"},
+			setupAuth:      func(c *gin.Context) {},
+			setupMock:      func(mt *mockTweetService) {},
+			expectedStatus: http.StatusUnauthorized,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "SESSION_NOT_FOUND", resp.Code)
+			},
+		},
+		{
+			name:        "JSON構文エラー",
+			requestBody: `{"content": "incomplete...`,
+			setupAuth: func(c *gin.Context) {
+				c.Set(contextkeys.AuthPayloadKey,  &dto.AuthContext{UserID: 10})
+			},
+			setupMock:      func(mt *mockTweetService) {},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
+			},
+		},
+		{
+			name:        "バリデーションエラー：内容が空",
+			requestBody: dto.CreateTweetRequest{Content: ""},
+			setupAuth: func(c *gin.Context) {
+				c.Set(contextkeys.AuthPayloadKey,  &dto.AuthContext{UserID: 10})
+			},
+			setupMock: func(mt *mockTweetService) {
+				mt.On("PostTweet", mock.Anything, int64(10), mock.Anything).Return(nil, errcode.ErrRequiredFieldMissing)
+			},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "REQUIRED_FIELD_MISSING", resp.Code)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mt := new(mockTweetService)
+			h := NewTweetHandler(mt)
+			tt.setupMock(mt)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			var buf bytes.Buffer
+			if s, ok := tt.requestBody.(string); ok {
+				buf.WriteString(s)
+			} else {
+				json.NewEncoder(&buf).Encode(tt.requestBody)
+			}
+			c.Request = httptest.NewRequest(http.MethodPost, "/tweets", &buf)
+
+			tt.setupAuth(c)
+			h.Create(c)
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+		})
+	}
+}
+
+func TestTweetGet(t *testing.T) {
+    gin.SetMode(gin.TestMode)
+    tests := []struct {
+        name           string
+        tweetID        string 
+        setupMock      func(mt *mockTweetService)
+        expectedStatus int
+        checkResponse  func(t *testing.T, w *httptest.ResponseRecorder)
+    }{
+        {
+            name:    "ツイート取得成功",
+            tweetID: "100",
+            setupMock: func(mt *mockTweetService) {
+                mt.On("FetchTweet", mock.Anything, int64(100)).Return(&models.Tweet{
+                    ID: 100, Content: "テスト取得", UserID: 10,
+                }, nil)
+            },
+            expectedStatus: http.StatusOK,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				fmt.Printf("\n--- [DEBUG] Raw JSON Response ---\n%s\n----------------------------------\n", w.Body.String())
+                var resp dto.Response
+				err := json.Unmarshal(w.Body.Bytes(), &resp)
+				require.NoError(t, err, "JSONのパースに失敗しました")
+				if w.Code != http.StatusOK {
+					return 
+				}
+				data, ok := resp.Data.(map[string]any)
+				if !ok {
+					t.Fatalf("Data should be a map, but got %T: %+v", resp.Data, resp.Data)
+				}
+				assert.EqualValues(t, 100, data["id"])
+            },
+        },
+        {
+            name:    "エラー: 存在しないID",
+            tweetID: "999",
+            setupMock: func(mt *mockTweetService) {
+                mt.On("FetchTweet", mock.Anything, int64(999)).Return(nil, errcode.ErrTweetNotFound)
+            },
+            expectedStatus: http.StatusNotFound,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                assert.Equal(t, "TWEET_NOT_FOUND", resp.Code)
+            },
+        },
+        {
+            name:           "エラー: 無効なID形式",
+            tweetID:        "abc",
+            setupMock:      func(mt *mockTweetService) {},
+            expectedStatus: http.StatusBadRequest,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                assert.Equal(t, "INVALID_ID_FORMAT", resp.Code)
+            },
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mt := new(mockTweetService)
+            h := NewTweetHandler(mt)
+            tt.setupMock(mt)
+
+            w := httptest.NewRecorder()
+            c, _ := gin.CreateTestContext(w)
+            c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+            c.Params = []gin.Param{{Key: "id", Value: tt.tweetID}}
+
+            h.Get(c)
+            assert.Equal(t, tt.expectedStatus, w.Code)
+            tt.checkResponse(t, w)
+        })
+    }
+}
+
+
+func TestTweetUpdate(t *testing.T) {
+    gin.SetMode(gin.TestMode)
+    tests := []struct {
+        name           string
+        tweetID        string
+        requestBody    any
+        setupAuth      func(c *gin.Context)
+        setupMock      func(mt *mockTweetService)
+        expectedStatus int
+        checkResponse  func(t *testing.T, w *httptest.ResponseRecorder)
+    }{
+        {
+            name:        "ツイート更新成功",
+            tweetID:     "100",
+            requestBody: dto.UpdateTweetRequest{Content: "更新後の内容"},
+            setupAuth: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
+            },
+            setupMock: func(mt *mockTweetService) {
+                mt.On("EditTweet", mock.Anything, "更新後の内容", int64(100), int64(10)).
+                    Return(&models.Tweet{ID: 100, Content: "更新後の内容", IsEdited: true}, true, nil)
+            },
+            expectedStatus: http.StatusOK,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                data := resp.Data.(map[string]any)
+                assert.True(t, data["is_edited"].(bool))
+            },
+        },
+        {
+            name:        "更新成功：内容に変更なし",
+            tweetID:     "100",
+            requestBody: dto.UpdateTweetRequest{Content: "同じ内容"},
+            setupAuth: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
+            },
+            setupMock: func(mt *mockTweetService) {
+                mt.On("EditTweet", mock.Anything, "同じ内容", int64(100), int64(10)).
+                    Return(&models.Tweet{ID: 100, Content: "同じ内容"}, false, nil)
+            },
+            expectedStatus: http.StatusOK,
+            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+                var resp dto.Response
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                assert.Contains(t, resp.Message, "変更はありません")
+            },
+        },
+        {
+            name:        "エラー：編集期限切れ",
+            tweetID:     "100",
+            requestBody: dto.UpdateTweetRequest{Content: "手遅れな更新"},
+            setupAuth: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
+            },
+            setupMock: func(mt *mockTweetService) {
+                mt.On("EditTweet", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+                    Return(nil, false, errcode.ErrEditTimeExpired)
+            },
+            expectedStatus: http.StatusUnprocessableEntity, 
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mt := new(mockTweetService)
+            h := NewTweetHandler(mt)
+            tt.setupMock(mt)
+
+            w := httptest.NewRecorder()
+            c, _ := gin.CreateTestContext(w)
+            
+            var buf bytes.Buffer
+            json.NewEncoder(&buf).Encode(tt.requestBody)
+            c.Request = httptest.NewRequest(http.MethodPatch, "/", &buf)
+            c.Params = []gin.Param{{Key: "id", Value: tt.tweetID}}
+
+            tt.setupAuth(c)
+            h.Update(c)
+            assert.Equal(t, tt.expectedStatus, w.Code)
+            if tt.checkResponse != nil {
+                tt.checkResponse(t, w)
+            }
+        })
+    }
+}
+
+func TestTweetDelete(t *testing.T) {
+    gin.SetMode(gin.TestMode)
+    tests := []struct {
+        name           string
+        tweetID        string
+        setupAuth      func(c *gin.Context)
+        setupMock      func(mt *mockTweetService)
+        expectedStatus int
+    }{
+        {
+            name:    "削除成功",
+            tweetID: "100",
+            setupAuth: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
+            },
+            setupMock: func(mt *mockTweetService) {
+                mt.On("RemoveTweet", mock.Anything, int64(100), int64(10)).Return(nil)
+            },
+            expectedStatus: http.StatusOK,
+        },
+        {
+            name:    "エラー：他人のツイートを削除しようとした",
+            tweetID: "100",
+            setupAuth: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 99}) 
+            },
+            setupMock: func(mt *mockTweetService) {
+                mt.On("RemoveTweet", mock.Anything, mock.Anything, mock.Anything).
+                    Return(errcode.ErrForbidden)
+            },
+            expectedStatus: http.StatusForbidden,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mt := new(mockTweetService)
+            h := NewTweetHandler(mt)
+            tt.setupMock(mt)
+
+            w := httptest.NewRecorder()
+            c, _ := gin.CreateTestContext(w)
+            c.Request = httptest.NewRequest(http.MethodDelete, "/", nil)
+            c.Params = []gin.Param{{Key: "id", Value: tt.tweetID}}
+
+            tt.setupAuth(c)
+            h.Delete(c)
+            assert.Equal(t, tt.expectedStatus, w.Code)
+        })
+    }
+}
+</file>
+
+<file path="internal/configuration/configuration.go">
+package configuration
+
+import (
+	"log"
+	"os"
+	"path/filepath"
+	"runtime"
+
+	"github.com/joho/godotenv"
+)
+
+var projectRoot string
+
+// パスの自動検知
+func init() {
+	// 環境変数のチェック（本番環境のカスタマイズ用）
+	projectRoot = os.Getenv("AITA_PROJECT_ROOT")
+	if projectRoot != "" {
+		return
+	}
+
+	//カレントディレクトリに .env があるか確認（バイナリと設定ファイルが同階層にある場合）
+	if _, err := os.Stat(".env"); err == nil {
+		cwd, _ := os.Getwd()
+		projectRoot = cwd
+		return
+	}
+
+	//開発環境用フォールバック（runtime を使用してソースコードのパスを取得）
+	_, b, _, _ := runtime.Caller(0)
+	projectRoot = filepath.Join(filepath.Dir(b), "..", "..")
+}
+
+func GetPath(relPath string) string {
+	return filepath.Join(projectRoot, relPath)
+}
+
+type Config struct{
+	DBConnStr        string
+	ServerAddress    string
+	AppEnv           string
+}
+
+func LoadConfig() *Config{
+	envPath := GetPath(".env")
+	if err := godotenv.Load(envPath); err != nil {
+		log.Printf("エラー :.envが見つかりません")
+	}
+
+	appEnv := os.Getenv("APP_ENV")
+	if 	appEnv == "" {
+		appEnv = "development"
+	}
+
+	var dbURL string
+	if appEnv== "test" {
+        dbURL = os.Getenv("DB_TEST_URL")
+		log.Println("DB_TEST_URLに切り替えます")
+    } else {
+		dbURL = os.Getenv("DB_URL")
+	}
+
+	if dbURL == "" {
+		log.Fatal("エラー：環境変数 DB_URL が設定されていません")
+	}
+	return &Config{
+		DBConnStr:     dbURL,
+		ServerAddress: ":8080",
+		AppEnv:        appEnv,
+	}
+}
+</file>
+
+<file path="internal/dto/authcontext.go">
+package dto
+
+type AuthContext struct {
+    UserID    int64
+    SessionID int64
+    Role      string
+}
+</file>
+
+<file path="internal/dto/mapper.go">
+package dto
+
+import (
+	"aita/internal/errcode"
+	"aita/internal/models"
+	"encoding/json"
+	"errors"
+	"io"
+
+	"github.com/go-playground/validator/v10"
+)
+
+
+func NewUserResponse(user *models.User) *UserResponse {
+	if user == nil {
+        return nil
+    }
+	return &UserResponse{
+		ID:        user.ID,
+		Username:  user.Username,
+		Email:     user.Email,
+		CreatedAt: user.CreatedAt,
+	}
+}
+
+func NewTweetResponse(tweet *models.Tweet) TweetResponse {
+	return TweetResponse{
+		ID: 		tweet.ID,
+		UserID:     tweet.UserID,
+		Content:    tweet.Content,
+		ImageURL:   tweet.ImageURL,
+		CreatedAt:  tweet.CreatedAt,
+		UpdatedAt:  tweet.UpdatedAt,
+		IsEdited:   tweet.IsEdited,
+	}
+}
+
+func Fail(err error) Response {
+	return Response{
+		Error: err.Error(),
+		Code:  GetBusinessCode(err),
+	}
+}
+
+func Success(data any) Response {
+	return Response{
+		Data: data,
+		Code: "SUCCESS",
+	}
+}
+
+func SuccessMsg(msg string) Response {
+	return Response{
+		Message: msg,
+		Code: "SUCCESS",
+	}
+}
+
+func SuccessWithMeta(data any, meta any) Response {
+	return Response{
+		Data: data,
+		Meta: meta,
+		Code: "SUCCESS",
+	}
+}
+
+func FilterBindError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return errcode.ErrInvalidJSON
+	}
+
+	var se *json.SyntaxError
+	var ute *json.UnmarshalTypeError
+	if errors.As(err, &se) || errors.As(err, &ute) {
+		return errcode.ErrInvalidJSON
+	}
+
+	var ve validator.ValidationErrors
+	if errors.As(err, &ve) {
+		return errcode.ErrInvalidRequestFormat
+	}
+
+	return errcode.ErrInvalidJSON
+}
+
+func GetStatusCode(err error) int {
+	if err == nil {
+		return 200
+	}
+
+	if errors.Is(err, errcode.ErrInvalidCredentials) ||
+		errors.Is(err, errcode.ErrSessionExpired) ||
+		errors.Is(err, errcode.ErrSessionNotFound) {
+		return 401
+	}
+
+	if errors.Is(err, errcode.ErrForbidden) {
+		return 403
+	}
+
+	if errors.Is(err, errcode.ErrUserNotFound) ||
+		errors.Is(err, errcode.ErrTweetNotFound) {
+		return 404
+	}
+
+	if errors.Is(err, errcode.ErrUsernameConflict) ||
+		errors.Is(err, errcode.ErrEmailConflict) ||
+		errors.Is(err, errcode.ErrTokenConflict) {
+		return 409
+	}
+
+	if errors.Is(err, errcode.ErrEditTimeExpired) {
+		return 422
+	}
+	if errors.Is(err, errcode.ErrRequiredFieldMissing) ||
+		errors.Is(err, errcode.ErrInvalidUsernameFormat) ||
+		errors.Is(err, errcode.ErrInvalidEmailFormat) ||
+		errors.Is(err, errcode.ErrInvalidPasswordFormat) ||
+		errors.Is(err, errcode.ErrInvalidUserID) ||
+		errors.Is(err, errcode.ErrInvalidSessionID) ||
+		errors.Is(err, errcode.ErrInvalidTokenFormat) ||
+		errors.Is(err, errcode.ErrInvalidTweetID) ||
+		errors.Is(err, errcode.ErrInvalidUrlFormat) ||
+		errors.Is(err, errcode.ErrInvalidContentFormat) ||
+		errors.Is(err, errcode.ErrValueTooLong) ||
+		errors.Is(err, errcode.ErrInvalidJSON) ||
+		errors.Is(err, errcode.ErrInvalidIDFormat ) ||
+		errors.Is(err, errcode.ErrInvalidRequestFormat) {
+		return 400
+	}
+
+	return 500
+}
+
+func GetBusinessCode(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	switch {
+	case errors.Is(err, errcode.ErrInvalidJSON):
+		return "INVALID_JSON_FORMAT"
+	case errors.Is(err, errcode.ErrInvalidIDFormat ):
+		return "INVALID_ID_FORMAT"
+	case errors.Is(err, errcode.ErrInvalidRequestFormat):
+		return "INVALID_REQUEST_FORMAT"
+	case errors.Is(err, errcode.ErrRequiredFieldMissing):
+		return "REQUIRED_FIELD_MISSING"
+	case errors.Is(err, errcode.ErrInvalidUsernameFormat):
+		return "INVALID_USERNAME_FORMAT"
+	case errors.Is(err, errcode.ErrInvalidEmailFormat):
+		return "INVALID_EMAIL_FORMAT"
+	case errors.Is(err, errcode.ErrInvalidTokenFormat):
+		return "INVALID_TOKEN_FORMAT"
+	case errors.Is(err, errcode.ErrInvalidPasswordFormat):
+		return "INVALID_PASSWORD_FORMAT"
+	case errors.Is(err, errcode.ErrInvalidUserID):
+		return "INVALID_USER_ID"
+	case errors.Is(err, errcode.ErrInvalidSessionID):
+		return "INVALID_SESSION_ID"
+	case errors.Is(err, errcode.ErrInvalidTweetID):
+		return "INVALID_TWEET_ID"
+	case errors.Is(err, errcode.ErrInvalidUrlFormat):
+		return "INVALID_URL_FORMAT"
+	case errors.Is(err, errcode.ErrInvalidContentFormat):
+		return "INVALID_CONTENT_FORMAT"
+	case errors.Is(err, errcode.ErrValueTooLong):
+		return "VALUE_TOO_LONG"
+
+	case errors.Is(err, errcode.ErrInvalidCredentials):
+		return "INVALID_CREDENTIALS"
+	case errors.Is(err, errcode.ErrSessionExpired):
+		return "SESSION_EXPIRED"
+	case errors.Is(err, errcode.ErrSessionNotFound):
+		return "SESSION_NOT_FOUND"
+
+	case errors.Is(err, errcode.ErrUserNotFound):
+		return "USER_NOT_FOUND"
+	case errors.Is(err, errcode.ErrTweetNotFound):
+		return "TWEET_NOT_FOUND"
+	case errors.Is(err, errcode.ErrUsernameConflict):
+		return "USERNAME_CONFLICT"
+	case errors.Is(err, errcode.ErrEmailConflict):
+		return "EMAIL_CONFLICT"
+	case errors.Is(err, errcode.ErrTokenConflict):
+		return "TOKEN_CONFLICT"
+	case errors.Is(err, errcode.ErrForbidden):
+		return "FORBIDDEN_ACCESS"
+
+	case errors.Is(err, errcode.ErrEditTimeExpired):
+		return "EDIT_TIME_EXPIRED"
+
+	default:
+		return "INTERNAL_SERVER_ERROR"
+	}
+}
+</file>
+
+<file path="internal/dto/request.go">
+package dto
+
+import (
+	"aita/internal/errcode"
+	"aita/internal/pkg/utils"
+	"strings"
+	"unicode/utf8"
+)
+
+type SignupRequest struct {
+	Username     string 	   `json:"username" binding:"required,min=4,max=50" `
+	Email        string        `json:"email" binding:"required,email"`
+	Password     string        `json:"password" binding:"required,min=8,max=72"`
+}
+
+type LoginRequest struct {
+	Email    	 string        `json:"email" binding:"required,email"`
+	Password 	 string         `json:"password" binding:"required,min=8,max=72"`
+}
+
+type CreateTweetRequest struct {
+	Content		 string        `json:"content" binding:"max=1000"`
+	ImageURL    *string        `json:"image_url" binding:"omitempty,url"`
+}
+
+type UpdateTweetRequest struct {
+    Content      string        `json:"content" binding:"required,max=1000"`
+}
+
+
+func (r *SignupRequest) Validate() error {
+	r.Username =strings.TrimSpace(r.Username)
+	r.Email = strings.TrimSpace(r.Email)
+	r.Password  = strings.TrimSpace(r.Password )
+	if r.Username == "" || r.Email == "" || r.Password == "" {
+		return errcode.ErrRequiredFieldMissing
+	}
+	if len(r.Username) < 4 || len(r.Username) > 50 {
+		return errcode.ErrInvalidUsernameFormat
+	}
+	if len(r.Password) < 8 || len(r.Password) > 72 {
+		return errcode.ErrInvalidPasswordFormat
+	}
+	if !utils.IsValidEmail(r.Email) || len(r.Email) > 255 {
+		return errcode.ErrInvalidEmailFormat
+	}	
+
+	return nil
+}
+
+
+func (r *LoginRequest) Validate() error {
+	r.Email = strings.TrimSpace(r.Email)
+	r.Password = strings.TrimSpace(r.Password)
+	if r.Email == "" || r.Password == "" {
+		return errcode.ErrRequiredFieldMissing
+	}
+	if len(r.Password) < 8 || len(r.Password) > 72 {
+		return errcode.ErrInvalidPasswordFormat
+	}
+	if !utils.IsValidEmail(r.Email) || len(r.Email) > 255 {
+		return errcode.ErrInvalidEmailFormat
+	}
+	return nil
+}
+
+func (r *CreateTweetRequest) Validate() error {
+    r.Content = strings.TrimSpace(r.Content)
+    if r.Content == "" {
+        return errcode.ErrRequiredFieldMissing
+    }
+	if r.ImageURL != nil {
+        trimmed := strings.TrimSpace(*r.ImageURL)
+        if trimmed == "" {
+            r.ImageURL = nil
+        } else {
+            *r.ImageURL = trimmed
+        }
+    }
+   	if utf8.RuneCountInString(r.Content) > 1000 {
+		return errcode.ErrInvalidContentFormat
+	}
+    return nil
+}
+
+func (r *UpdateTweetRequest) Validate() error {
+    r.Content = strings.TrimSpace(r.Content)
+    if r.Content == "" {
+        return errcode.ErrRequiredFieldMissing
+    }
+    if utf8.RuneCountInString(r.Content) > 1000 {
+        return errcode.ErrInvalidContentFormat
+    }
+    return nil
+}
+</file>
+
+<file path="internal/dto/response.go">
+package dto
+
+import "time"
+
+type Response struct {
+	Data    any    `json:"data,omitempty"`
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Code    string `json:"code,omitempty"`
+	Meta    any    `json:"meta,omitempty"`
+}
+
+type UserResponse struct {
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type LoginResponse struct {
+	SessionToken string       `json:"session_token"`
+	User         *UserResponse `json:"user"`
+}
+
+type TweetResponse struct{
+	ID            int64        `json:"id"`
+	UserID        int64		   `json:"user_id"`
+	Content       string       `json:"content"`
+	ImageURL     *string       `json:"image_url"`
+	CreatedAt     time.Time    `json:"created_at"` 
+	UpdatedAt     time.Time    `json:"updated_at"`
+	IsEdited      bool         `json:"is_edited"`
+}
+</file>
+
+<file path="internal/errcode/error_code.go">
+package errcode
+
+import "errors"
+
+var (
+	ErrInvalidRequestFormat  = errors.New("リクエスト形式が正しくありません")
+	ErrInvalidJSON           = errors.New("JSONの構文が正しくありません")
+	ErrInvalidIDFormat       = errors.New("IDの形式が正しくありません")
+	ErrEditTimeExpired       = errors.New("投稿から10分以上経過したツイートは編集できません")
+	ErrForbidden             = errors.New("指定された操作を行う権限がありません")
+	ErrRequiredFieldMissing  = errors.New("必要な項目が不足しています")
+	ErrInvalidUsernameFormat = errors.New("ユーザーネームの形式が正しくありません(4〜50文字)")
+	ErrInvalidEmailFormat    = errors.New("有効なメールアドレスを入力してください(最大255文字)")
+	ErrInvalidPasswordFormat = errors.New("パスワードの形式が正しくありません(8〜72文字)")
+	ErrInvalidUserID         = errors.New("無効なユーザーIDです")
+	ErrInvalidSessionID      = errors.New("無効なセッションIDです")
+	ErrInvalidTokenFormat    = errors.New("有効トークンを入力してください(最大255文字)")
+	ErrInvalidUrlFormat      = errors.New("Will be written")
+	ErrInvalidTweetID        = errors.New("無効なツイートIDです")
+	ErrInvalidContentFormat  = errors.New("contentの形式が正しくありません(最大1000文字)")
+
+	ErrValueTooLong = errors.New("入力内容が長すぎます")
+
+	ErrUserNotFound    = errors.New("ユーザーデータが存在しません")
+	ErrSessionNotFound = errors.New("セッションが見つかりません")
+	ErrTweetNotFound   = errors.New("ツイートが見つかりません")
+
+	ErrSessionExpired   = errors.New("セッションが期限切れです")
+	ErrUsernameConflict = errors.New("ユーザーネームは既に使用されています")
+	ErrEmailConflict    = errors.New("メールのアドレスは既に使用されています")
+	ErrTokenConflict    = errors.New("トークンは既に存在します")
+
+	ErrInvalidCredentials = errors.New("メールアドレスまたはパスワードが正しくありません")
+)
+</file>
+
+<file path="internal/models/const.go">
+package models
+
+import "time"
+
+const (
+	MaxSessionLife		= 7 * 24 * time.Hour
+	SessionDuration     = 24 * time.Hour
+	editWindow          = 10 * time.Minute
+)
+</file>
+
+<file path="migrations/000004_add_updated_at_to_tweets_table.down.sql">
+DROP TRIGGER IF EXISTS update_tweet_modtime ON tweets;
+
+DROP FUNCTION IF EXISTS update_modified_column();
+
+ALTER TABLE tweets DROP COLUMN IF EXISTS updated_at;
+</file>
+
+<file path="migrations/000004_add_updated_at_to_tweets_table.up.sql">
+ALTER TABLE tweets 
+
+ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+CREATE OR REPLACE FUNCTION update_modified_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_tweet_modtime
+    BEFORE UPDATE ON tweets
+    FOR EACH ROW
+    EXECUTE FUNCTION update_modified_column();
+</file>
+
+<file path="migrations/000005_add_is_edited_to_tweets.down.sql">
+ALTER TABLE tweets DROP COLUMN is_edited;
+</file>
+
+<file path="migrations/000005_add_is_edited_to_tweets.up.sql">
+ALTER TABLE tweets ADD COLUMN is_edited BOOLEAN DEFAULT FALSE;
+</file>
 
 <file path="internal/contextkeys/keys.go">
 package contextkeys
@@ -111,7 +1026,6 @@ package db
 
 const (
 	errCodeStringDataRightTruncation = "22001"
-	errCodeNotNullViolation          = "23502"
 	errCodeForeignKeyViolation       = "23503"
 	errCodeUniqueViolation           = "23505"
 	constraintSessionUserFK          = "sessions_user_id_fkey"
@@ -131,6 +1045,7 @@ package db
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"context"
@@ -164,7 +1079,7 @@ func TestCreateSession(t *testing.T) {
 			ExpiresAt: expiresAt,
 		}
 		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
-	
+
 		require.NoError(t, err, "Sessionの作成に失敗してはいけません")
 		require.NotNil(t, createdSession)
 		assert.Equal(t, createdUser.ID, createdSession.UserID)
@@ -172,7 +1087,7 @@ func TestCreateSession(t *testing.T) {
 		assert.WithinDuration(t, expiresAt, createdSession.ExpiresAt, time.Second)
 		assert.NotZero(t, createdSession.CreatedAt)
 	})
-	
+
 }
 
 func TestCreateSessionWhileErr(t *testing.T) {
@@ -197,30 +1112,30 @@ func TestCreateSessionWhileErr(t *testing.T) {
 			ExpiresAt: expiresAt,
 		}
 		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
-	
+
 		assert.ErrorIs(t, err, errcode.ErrUserNotFound)
 		assert.Nil(t, createdSession)
 	})
 
 	t.Run("23505: トークンハッシュの重複 (Unique Violation)", func(t *testing.T) {
-    	mockHash := "duplicate_hash"
-   		expiresAt := time.Now().Add(24 * time.Hour).UTC()
-    	initSession := &models.Session{
-			UserID: createdUser.ID, 
-			TokenHash: mockHash, 
+		mockHash := "duplicate_hash"
+		expiresAt := time.Now().Add(24 * time.Hour).UTC()
+		initSession := &models.Session{
+			UserID:    createdUser.ID,
+			TokenHash: mockHash,
 			ExpiresAt: expiresAt,
 		}
-    	_, err := testSessionStore.Create(ctx, initSession)
-    	require.NoError(t, err)
+		_, err := testSessionStore.Create(ctx, initSession)
+		require.NoError(t, err)
 
-    	newSession := &models.Session{
-			UserID: createdUser.ID, 
-			TokenHash: mockHash, 
+		newSession := &models.Session{
+			UserID:    createdUser.ID,
+			TokenHash: mockHash,
 			ExpiresAt: expiresAt,
 		}
-    	createdSession, err := testSessionStore.Create(ctx, newSession)
+		createdSession, err := testSessionStore.Create(ctx, newSession)
 
-    	assert.ErrorIs(t, err, errcode.ErrTokenConflict)
+		assert.ErrorIs(t, err, errcode.ErrTokenConflict)
 		assert.Nil(t, createdSession)
 	})
 
@@ -233,7 +1148,7 @@ func TestCreateSessionWhileErr(t *testing.T) {
 			ExpiresAt: expiresAt,
 		}
 		createdSession, err := testSessionStore.Create(ctx, sessionToCreate)
-	
+
 		assert.ErrorIs(t, err, errcode.ErrValueTooLong)
 		assert.Nil(t, createdSession)
 	})
@@ -299,7 +1214,7 @@ func TestGetByHashWhileErr(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
-	
+
 	newUser := &models.User{
 		Username:     "test_get_token",
 		Email:        "get_token@example.com",
@@ -324,11 +1239,11 @@ func TestGetByHashWhileErr(t *testing.T) {
 		assert.ErrorIs(t, err, errcode.ErrSessionNotFound)
 		assert.Nil(t, foundSession)
 	})
-	
+
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
 		tempDB, err := testutils.OpenDB(testContext.DSN)
 		require.NoError(t, err)
-		
+
 		tempSessionStore := NewPostgresSessionStore(tempDB)
 		tempDB.Close()
 
@@ -344,7 +1259,7 @@ func TestUpdateExpiredAt(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
-	
+
 	initUser := &models.User{
 		Username:     "update_test_user",
 		Email:        "update_test@example.com",
@@ -378,7 +1293,7 @@ func TestUpdateExpiredAtWhileErr(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
-	
+
 	initUser := &models.User{
 		Username:     "update_test_user",
 		Email:        "update_test@example.com",
@@ -416,11 +1331,11 @@ func TestUpdateExpiredAtWhileErr(t *testing.T) {
 	})
 }
 
-func TestDeleteByHash(t *testing.T) {
+func TestDeleteBySessionID(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
-	
+
 	initUser := &models.User{
 		Username:     "update_test_user",
 		Email:        "update_test@example.com",
@@ -439,7 +1354,7 @@ func TestDeleteByHash(t *testing.T) {
 	require.NotNil(t, createdSession)
 
 	t.Run("正常にハッシュで削除できること", func(t *testing.T) {
-	err = testSessionStore.DeleteByHash(ctx, hash)
+		err = testSessionStore.DeleteBySessionID(ctx, createdSession.ID)
 		require.NoError(t, err)
 		test, err := testSessionStore.GetByHash(ctx, hash)
 		require.ErrorIs(t, err, errcode.ErrSessionNotFound)
@@ -450,15 +1365,15 @@ func TestDeleteByHash(t *testing.T) {
 		tempStore := NewPostgresSessionStore(tempDB)
 		tempDB.Close()
 
-		err := tempStore.DeleteByHash(ctx, hash)
+		err := tempStore.DeleteBySessionID(ctx, createdSession.ID)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "セッションの削除に失敗しました")
 		t.Logf("期待通りキャッチされたエラー: %v", err)
 	})
 
-	t.Run("存在しないトークンを指定した場合、ErrSessionNotFoundを返すこと", func(t *testing.T) {
-		wrongToken := "wrong_hash"
-		err := testSessionStore.DeleteByHash(ctx, wrongToken)
+	t.Run("存在しないIDを指定した場合、ErrSessionNotFoundを返すこと", func(t *testing.T) {
+		wrongID:= int64(999)
+		err := testSessionStore.DeleteBySessionID(ctx, wrongID)
 		assert.ErrorIs(t, err, errcode.ErrSessionNotFound)
 	})
 }
@@ -477,7 +1392,7 @@ func TestDeleteAllByUserID(t *testing.T) {
 	hashList := []string{"token_hash_1", "token_hash_2", "token_hash_3"}
 	for i := range hashList {
 		initSession := &models.Session{
-			UserID: createdUser.ID,
+			UserID:    createdUser.ID,
 			TokenHash: hashList[i],
 			ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 		}
@@ -489,7 +1404,7 @@ func TestDeleteAllByUserID(t *testing.T) {
 	t.Run("正常にユーザーIDで削除できること", func(t *testing.T) {
 		err = testSessionStore.DeleteAllByUserID(ctx, createdUser.ID)
 		require.NoError(t, err)
-		for i := range hashList{
+		for i := range hashList {
 			createdSession, err := testSessionStore.GetByHash(ctx, hashList[i])
 			require.ErrorIs(t, err, errcode.ErrSessionNotFound)
 			require.Nil(t, createdSession)
@@ -513,6 +1428,7 @@ func TestDeleteAllByUserID(t *testing.T) {
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"database/sql"
@@ -601,8 +1517,12 @@ func (s *postgresSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt ti
 	if err != nil {
 		return fmt.Errorf("セッション期限の更新に失敗しました: %w", err)
 	}
-	
+
 	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("影響を受けた行数の取得に失敗しました: %w", err)
+	}
+
 	if rows == 0 {
 		return errcode.ErrSessionNotFound
 	}
@@ -610,18 +1530,21 @@ func (s *postgresSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt ti
 	return nil
 }
 
-func (s *postgresSessionStore) DeleteByHash(ctx context.Context, tokenHash string) error {
-    query := `DELETE FROM sessions WHERE token_hash = $1`
-    result, err := s.database.ExecContext(ctx, query, tokenHash)
-    if err != nil {
-        return fmt.Errorf("セッションの削除に失敗しました: %w", err)
-    }
+func (s *postgresSessionStore) DeleteBySessionID(ctx context.Context, sessionID int64) error {
+	query := `DELETE FROM sessions WHERE id = $1`
+	result, err := s.database.ExecContext(ctx, query, sessionID)
+	if err != nil {
+		return fmt.Errorf("セッションの削除に失敗しました: %w", err)
+	}
 
-    rows, _ := result.RowsAffected()
-    if rows == 0 {
-        return errcode.ErrSessionNotFound
-    }
-    return nil
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("影響を受けた行数の取得に失敗しました: %w", err)
+	}
+	if rows == 0 {
+		return errcode.ErrSessionNotFound
+	}
+	return nil
 }
 
 func (s *postgresSessionStore) DeleteAllByUserID(ctx context.Context, userID int64) error {
@@ -631,43 +1554,6 @@ func (s *postgresSessionStore) DeleteAllByUserID(ctx context.Context, userID int
 		return fmt.Errorf("ユーザーの全セッション削除に失敗しました: %w", err)
 	}
 
-	return nil
-}
-</file>
-
-<file path="internal/models/validation.go">
-package models
-
-import (
-	"aita/internal/pkg/utils"
-	"strings"
-	"unicode/utf8"
-)
-
-func IsValidSignUpReq(req *SignupRequest) error {
-	if req.Username == "" || req.Email == "" || req.Password == "" {
-		return ErrRequiredFieldMissing
-	}
-	if len(req.Username) < 4 || len(req.Username) > 50 {
-		return ErrInvalidUsernameFormat
-	}
-	if len(req.Password) < 8 || len(req.Password) > 72 {
-		return ErrInvalidPasswordFormat
-	}
-	if !utils.IsValidEmail(req.Email) || len(req.Email) > 255 {
-		return ErrInvalidEmailFormat
-	}
-
-	return nil
-}
-
-func IsValidTweetReq(req *CreateTweetRequest) error {
-	if strings.TrimSpace(req.Content) == "" {
-		return ErrRequiredFieldMissing
-	}
-	if utf8.RuneCountInString(req.Content) > 1000 {
-		return ErrInvalidContentFormat
-	}
 	return nil
 }
 </file>
@@ -747,6 +1633,8 @@ func SafeGet[T any](args mock.Arguments, index int) *T {
 package service
 
 import (
+	"aita/internal/dto"
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"fmt"
@@ -765,7 +1653,7 @@ func TestRegister(t *testing.T) {
         inputBody *dto.SignupRequest
         setupMock func(mu *mockUserStore, mh *mockBcryptHasher)
         wantedErr error
-        errMsg    string 
+        errMsg    string
     }{
         "登録成功": {
             inputBody: &dto.SignupRequest{
@@ -778,49 +1666,23 @@ func TestRegister(t *testing.T) {
                 mu.On("Create", mock.Anything, mock.MatchedBy(func(user *models.User) bool {
                     return user.Username == "mock_user" && user.Email == "mock@example.com" && user.PasswordHash == "mock_hash"
                 })).Return(&models.User{
-                    ID: 1, 
-                    Username: "mock_user", 
-                    Email: "mock@example.com", 
-                    PasswordHash: "mock_hash", 
-                    CreatedAt: time.Now().UTC(),
-                }, nil)},
+                    ID:           1,
+                    Username:     "mock_user",
+                    Email:        "mock@example.com",
+                    PasswordHash: "mock_hash",
+                    CreatedAt:    time.Now().UTC(),
+                }, nil)
+            },
             wantedErr: nil,
         },
         "必須項目が不足": {
             inputBody: &dto.SignupRequest{
                 Username: "mock_user",
                 Email:    "mock@example.com",
-                Password: "",
+                Password: "", 
             },
             setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
             wantedErr: errcode.ErrRequiredFieldMissing,
-        },
-        "ユーザー名形式が正しくない": {
-            inputBody: &dto.SignupRequest{
-                Username: "m",
-                Email:    "mock@example.com",
-                Password: "password101",
-            },
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
-            wantedErr: errcode.ErrInvalidUsernameFormat,
-        },
-        "パスワード形式が正しくない": {
-            inputBody: &dto.SignupRequest{
-                Username: "mock_user",
-                Email:    "mock@example.com",
-                Password: "123",
-            },
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
-            wantedErr: errcode.ErrInvalidPasswordFormat,
-        },
-        "メールアドレス形式が正しくない": {
-            inputBody: &dto.SignupRequest{
-                Username: "mock_user",
-                Email:    "mockxamplecom",
-                Password: "password101",
-            },
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
-            wantedErr: errcode.ErrInvalidEmailFormat,
         },
         "パスワードをハッシュ化に失敗": {
             inputBody: &dto.SignupRequest{
@@ -832,7 +1694,7 @@ func TestRegister(t *testing.T) {
                 mh.On("Generate", "password101").Return("", errMockHashFailed)
             },
             wantedErr: errMockHashFailed,
-            errMsg: "パスワードをハッシュ化に失敗しました",
+            errMsg:    "パスワードをハッシュ化に失敗しました",
         },
         "データベース内部エラー": {
             inputBody: &dto.SignupRequest{
@@ -847,7 +1709,7 @@ func TestRegister(t *testing.T) {
                 })).Return(nil, errMockInternal)
             },
             wantedErr: errMockInternal,
-            errMsg: "登録に失敗しました",
+            errMsg:    "登録に失敗しました",
         },
     }
 
@@ -858,7 +1720,7 @@ func TestRegister(t *testing.T) {
             tt.setupMock(mu, mh)
             svc := NewUserService(mu, mh)
             ctx := context.Background()
-            res, err := svc.Register(ctx, tt.inputBody)
+            res, err := svc.Register(ctx, tt.inputBody.Username, tt.inputBody.Email, tt.inputBody.Password)
 
             if tt.wantedErr != nil {
                 assert.ErrorIs(t, err, tt.wantedErr)
@@ -885,132 +1747,184 @@ func TestRegister(t *testing.T) {
     }
 }
 
-func TestLogin(t *testing.T) {
-    gin.SetMode(gin.TestMode)
+func TestExistsByEmail(t *testing.T) {
     tests := map[string]struct {
-        email     string
-        password  string
-        setupMock func(mu *mockUserStore, mh *mockBcryptHasher)
-        wantedErr error
-        errMsg    string
+        email          string
+        setupMock      func(m *mockUserStore)
+        wantErr        error
+        expectedErrMsg string
     }{
-        "ログイン成功": {
-            email:    "mock@example.com",
-            password: "password123",
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
-                mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&models.User{
-                    ID: 1, Email: "mock@example.com", PasswordHash: "hashed_pass",
-                }, nil)
-                mh.On("Compare", "hashed_pass", "password123").Return(nil)
+        "【正常系】ユーザーが存在する場合、正常にユーザー情報を返す": {
+            email: "exist@example.com",
+            setupMock: func(m *mockUserStore) {
+                m.On("GetByEmail", mock.Anything, "exist@example.com").
+                    Return(&models.User{Email: "exist@example.com"}, nil)
             },
-            wantedErr: nil,
+            wantErr: nil,
         },
-        "必須項目が不足": {
-            email:     "mock@example.com",
-            password:  "",
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
-            wantedErr: errcode.ErrRequiredFieldMissing,
+        "【異常系】メールアドレスが空の場合、バリデーションエラーを返す": {
+            email:     "",
+            setupMock: func(m *mockUserStore) {},
+            wantErr:   errcode.ErrRequiredFieldMissing,
         },
-        "メールアドレス形式が正しくない": {
-            email:     "invalid-email",
-            password:  "password123",
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
-            wantedErr: errcode.ErrInvalidEmailFormat,
-        },
-        "パスワード形式が正しくない": {
-            email:     "mock@example.com",
-            password:  "12", 
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
-            wantedErr: errcode.ErrInvalidPasswordFormat,
-        },
-        "認証失敗(ユーザー不在)": {
-            email:    "none@example.com",
-            password: "password123",
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
-                mu.On("GetByEmail", mock.Anything, "none@example.com").Return(nil, errcode.ErrUserNotFound)
+        "【異常系】ユーザーが存在しない場合、認証エラーに変換して返す（ユーザー列挙防止）": {
+            email: "notfound@example.com",
+            setupMock: func(m *mockUserStore) {
+                m.On("GetByEmail", mock.Anything, "notfound@example.com").
+                    Return(nil, errcode.ErrUserNotFound)
             },
-            wantedErr: errcode.ErrInvalidCredentials,
+            wantErr: errcode.ErrInvalidCredentials,
         },
-        "認証失敗(DB接続失敗など)": {
-            email:    "test@example.com",
-            password: "password123",
-            setupMock: func(ms *mockUserStore, mh *mockBcryptHasher) {
-                ms.On("GetByEmail", mock.Anything, "test@example.com").Return(nil, errMockInternal)
+        "【異常系】データベース接続エラー等の内部エラーが発生した場合": {
+            email: "db@example.com",
+            setupMock: func(m *mockUserStore) {
+                m.On("GetByEmail", mock.Anything, "db@example.com").
+                    Return(nil, errMockInternal )
             },
-            wantedErr: errMockInternal,
-            errMsg: "ユーザー情報の取得に失敗しました",
-        },
-           "認証失敗(パスワード不一致)": {
-            email:    "mock@example.com",
-            password: "wrong-password",
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
-                mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&models.User{
-                    PasswordHash: "correct_hash",
-                }, nil)
-                mh.On("Compare", "correct_hash", "wrong-password").Return(fmt.Errorf("hash mismatch"))
-            },
-            wantedErr: errcode.ErrInvalidCredentials,
+            wantErr: errMockInternal,
+            expectedErrMsg: "ユーザー情報の取得に失敗しました",
         },
     }
-     
 
     for name, tt := range tests {
         t.Run(name, func(t *testing.T) {
             mu := new(mockUserStore)
-            mh := new(mockBcryptHasher)
-            tt.setupMock(mu, mh)
+            tt.setupMock(mu)
             
-            svc := NewUserService(mu, mh)
+            svc := &userService{userStore: mu} 
+            
             ctx := context.Background()
-            res, err := svc.Login(ctx, tt.email, tt.password)
+            user, err := svc.existsByEmail(ctx, tt.email)
 
-            if tt.wantedErr != nil {
-                assert.ErrorIs(t, err, tt.wantedErr)
-                if tt.errMsg != "" {
-					assert.Contains(t, err.Error(), tt.errMsg)
-				}
-                assert.Nil(t, res)
+            if tt.wantErr != nil {
+                assert.ErrorIs(t, err, tt.wantErr)
+                assert.Nil(t, user)
+                if tt.expectedErrMsg != "" {
+                    assert.Contains(t, err.Error(), tt.expectedErrMsg)
+                }
             } else {
-                require.NoError(t, err)
-                require.NotNil(t, res)
-                assert.Equal(t, tt.email, res.Email)
+                assert.NoError(t, err)
+                assert.NotNil(t, user)
+                assert.Equal(t, tt.email, user.Email)
             }
             mu.AssertExpectations(t)
-            mh.AssertExpectations(t)
         })
     }
 }
 
+func TestLogin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := map[string]struct {
+		email     string
+		password  string
+		setupMock func(mu *mockUserStore, mh *mockBcryptHasher)
+		wantedErr error
+		errMsg    string
+	}{
+		"【正常系】ログイン成功：正しい資格情報でユーザー情報を返す": {
+			email:    "mock@example.com",
+			password: "password123",
+			setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+				mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&models.User{
+					ID: 1, Email: "mock@example.com", PasswordHash: "hashed_pass",
+				}, nil)
+				mh.On("Compare", "hashed_pass", "password123").Return(nil)
+			},
+			wantedErr: nil,
+		},
+		"【異常系】必須項目不足：パスワードが空の場合": {
+			email:     "mock@example.com",
+			password:  "",
+			setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+			wantedErr: errcode.ErrRequiredFieldMissing,
+		},
+		"【異常系】認証失敗：ユーザーが存在しない場合（ユーザー列挙防止）": {
+			email:    "none@example.com",
+			password: "password123",
+			setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+				mu.On("GetByEmail", mock.Anything, "none@example.com").Return(nil, errcode.ErrUserNotFound)
+			},
+			wantedErr: errcode.ErrInvalidCredentials,
+		},
+		"【異常系】認証失敗：DB接続エラー等の内部エラー": {
+			email:    "test@example.com",
+			password: "password123",
+			setupMock: func(ms *mockUserStore, mh *mockBcryptHasher) {
+				ms.On("GetByEmail", mock.Anything, "test@example.com").Return(nil, errMockInternal)
+			},
+			wantedErr: errMockInternal,
+			errMsg:    "ユーザー情報の取得に失敗しました",
+		},
+		"【異常系】認証失敗：パスワード不一致": {
+			email:    "mock@example.com",
+			password: "wrong-password",
+			setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+				mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&models.User{
+					PasswordHash: "correct_hash",
+				}, nil)
+				mh.On("Compare", "correct_hash", "wrong-password").Return(fmt.Errorf("hash mismatch"))
+			},
+			wantedErr: errcode.ErrInvalidCredentials,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			mu := new(mockUserStore)
+			mh := new(mockBcryptHasher)
+			tt.setupMock(mu, mh)
+
+			svc := NewUserService(mu, mh)
+			ctx := context.Background()
+			res, err := svc.Login(ctx, tt.email, tt.password)
+
+			if tt.wantedErr != nil {
+				assert.ErrorIs(t, err, tt.wantedErr)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+				assert.Nil(t, res)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				assert.Equal(t, tt.email, res.Email)
+			}
+			mu.AssertExpectations(t)
+			mh.AssertExpectations(t)
+		})
+	}
+}
+
 func TestToMyPage(t *testing.T) {
-    tests := map[string]struct {
-        userID    int64
-        setupMock func(mu *mockUserStore)
-        wantedErr error
-        errMsg    string 
-    }{
-        "取得成功": {
-            userID: 1,
-            setupMock: func(mu *mockUserStore) {
-                mu.On("GetByID", mock.Anything, int64(1)).Return(&models.User{ID: 1}, nil)
-            },
-            wantedErr: nil,
-        },
-        "ユーザーID無効": {
-            userID: -1,
-            setupMock: func(mu *mockUserStore) {},
-            wantedErr: errcode.ErrInvalidUserID,
-        },
-        "データベース内部エラー": {
-            userID: 1,
-            setupMock: func(mu *mockUserStore) {
-                mu.On("GetByID", mock.Anything, int64(1)).Return(nil, errMockInternal)
-            },
-            wantedErr: errMockInternal,
-            errMsg: "ユーザー情報の取得に失敗しました",
-        },
-    }
-    
-    for name, tt := range tests {
+	tests := map[string]struct {
+		userID    int64
+		setupMock func(mu *mockUserStore)
+		wantedErr error
+		errMsg    string
+	}{
+		"取得成功": {
+			userID: 1,
+			setupMock: func(mu *mockUserStore) {
+				mu.On("GetByID", mock.Anything, int64(1)).Return(&models.User{ID: 1}, nil)
+			},
+			wantedErr: nil,
+		},
+		"ユーザーID無効": {
+			userID:    -1,
+			setupMock: func(mu *mockUserStore) {},
+			wantedErr: errcode.ErrInvalidUserID,
+		},
+		"データベース内部エラー": {
+			userID: 1,
+			setupMock: func(mu *mockUserStore) {
+				mu.On("GetByID", mock.Anything, int64(1)).Return(nil, errMockInternal)
+			},
+			wantedErr: errMockInternal,
+			errMsg:    "ユーザー情報の取得に失敗しました",
+		},
+	}
+
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			mu := new(mockUserStore)
 			mh := new(mockBcryptHasher)
@@ -1084,186 +1998,14 @@ go
 go.sum.bak
 </file>
 
-<file path="internal/api/tweet_create_test.go">
-package api
-
-import (
-	"aita/internal/contextkeys"
-	"aita/internal/models"
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"testing"
-	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-)
-
-func TestTweetCreate(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-    tests := []struct {
-        name           string
-        requestBody    any
-        setupAuth      func(c *gin.Context)
-        setupMock      func(mt *mockTweetService)
-        expectedStatus int
-        checkResponse  func(t *testing.T, w *httptest.ResponseRecorder)
-    }{
-        {
-            name:        "ツイート投稿成功",
-            requestBody: dto.CreateTweetRequest{Content: "AITAの初投稿!"},
-            setupAuth: func(c *gin.Context) {
-                c.Set(contextkeys.AuthPayloadKey, int64(10))
-            },
-            setupMock: func(mt *mockTweetService) {
-                expectedTweet := &models.Tweet{
-                    ID: 100, 
-                    Content: "AITAの初投稿!", 
-                    UserID: 10,
-                    CreatedAt: time.Now(),
-                }
-                mt.On("PostTweet", mock.Anything, int64(10), mock.Anything).Return(expectedTweet, nil)
-            },
-            expectedStatus: http.StatusCreated,
-            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-                fmt.Println("Raw Response:", w.Body.String())
-                var resp dto.Response
-                json.Unmarshal(w.Body.Bytes(), &resp)
-                data := resp.Data.(map[string]any)
-                assert.Equal(t, float64(100), data["id"]) 
-                assert.Equal(t, "AITAの初投稿!", data["content"])
-            },
-        },
-        {
-            name:        "JSON構文エラー",
-            requestBody: `{"content": "incomplete...`,
-            setupAuth: func(c *gin.Context) {
-                c.Set(contextkeys.AuthPayloadKey, int64(10))
-            },
-            setupMock:      func(mt *mockTweetService) {},
-            expectedStatus: http.StatusBadRequest,
-            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-                var resp dto.Response
-                json.Unmarshal(w.Body.Bytes(), &resp)
-                assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
-            },
-        },
-        {
-            name:        "バリデーションエラー：内容が空",
-            requestBody: dto.CreateTweetRequest{Content: ""},
-            setupAuth: func(c *gin.Context) {
-                c.Set(contextkeys.AuthPayloadKey, int64(10))
-            },
-            setupMock: func(mt *mockTweetService) {
-                mt.On("PostTweet", mock.Anything, int64(10), mock.Anything).Return(nil, errcode.ErrRequiredFieldMissing)
-            },
-            expectedStatus: http.StatusBadRequest,
-            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-                var resp dto.Response
-                json.Unmarshal(w.Body.Bytes(), &resp)
-                assert.Equal(t, "REQUIRED_FIELD_MISSING", resp.Code)
-            },
-        },
-        {
-            name:        "未認証エラー：ContextにIDがない",
-            requestBody: dto.CreateTweetRequest{Content: "Hello"},
-            setupAuth:   func(c *gin.Context) {}, 
-            setupMock:   func(mt *mockTweetService) {},
-            expectedStatus: http.StatusUnauthorized,
-            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-                var resp dto.Response
-                json.Unmarshal(w.Body.Bytes(), &resp)
-                assert.Equal(t, "SESSION_NOT_FOUND", resp.Code)
-            },
-        },
-    }
-
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            mt := new(mockTweetService)
-            h := NewTweetHandler(mt)
-            tt.setupMock(mt)
-            w := httptest.NewRecorder()
-            c, _ := gin.CreateTestContext(w)
-
-            var buf bytes.Buffer
-            if s, ok := tt.requestBody.(string); ok {
-                buf.WriteString(s)
-            } else {
-                json.NewEncoder(&buf).Encode(tt.requestBody)
-            }
-            c.Request = httptest.NewRequest(http.MethodPost, "/tweets", &buf)
-
-            tt.setupAuth(c)
-            h.Create(c)
-            assert.Equal(t, tt.expectedStatus, w.Code)
-            if tt.checkResponse != nil {
-                tt.checkResponse(t, w)
-            }
-        })
-    }
-}
-</file>
-
-<file path="internal/config/config.go">
-package config
-
-import (
-	"log"
-	"os"
-	"path/filepath"
-	"runtime"
-
-	"github.com/joho/godotenv"
-)
-
-var projectRoot string
-
-func init() {
-	_, b, _, _ := runtime.Caller(0)
-	projectRoot = filepath.Join(filepath.Dir(b), "..", "..")
-}
-
-func GetPath(relPath string) string {
-	return filepath.Join(projectRoot, relPath)
-}
-
-type Config struct{
-	DBConnStr        string
-	ServerAddress    string
-}
-
-func LoadConfig() *Config{
-	envPath := GetPath(".env")
-	if err := godotenv.Load(envPath); err != nil {
-		log.Fatal("エラー :.envが見つかりません")
-	}
-	dbURL := os.Getenv("DB_URL")
-	if os.Getenv("APP_ENV") == "test" {
-        dbURL = os.Getenv("DB_TEST_URL")
-		log.Println("DB_TEST_URLに切り替えます")
-    }
-
-	if dbURL == "" {
-		log.Fatal("エラー：環境変数 DB_URL が設定されていません")
-	}
-	return &Config{
-		DBConnStr:       dbURL,
-		ServerAddress:   ":8080",
-	}
-}
-</file>
-
 <file path="internal/db/tweet_store.go">
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -1283,7 +2025,7 @@ func (s *postgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Twee
 	query := `
 		INSERT INTO tweets(user_id, content, image_url)
 		VALUES($1, $2, $3)
-		RETURNING id, user_id, content, image_url, created_at`
+		RETURNING id, user_id, content, image_url, created_at, updated_at, is_edited`
 	var newTweet models.Tweet
 	err := s.database.QueryRowContext(
 		ctx,
@@ -1292,223 +2034,91 @@ func (s *postgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Twee
 		tweet.Content,
 		tweet.ImageURL,
 	).Scan(
-		&newTweet.ID, 
+		&newTweet.ID,
 		&newTweet.UserID,
 		&newTweet.Content,
 		&newTweet.ImageURL,
 		&newTweet.CreatedAt,
+		&newTweet.UpdatedAt,
+		&newTweet.IsEdited, 
 	)
-	
+
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
 			if pqErr.Code == errCodeForeignKeyViolation && pqErr.Constraint == constraintTweetUserFK {
-                return nil, errcode.ErrUserNotFound
-            }
+				return nil, errcode.ErrUserNotFound
+			}
 			if pqErr.Code == errCodeStringDataRightTruncation {
 				return nil, errcode.ErrValueTooLong
 			}
 		}
-		
+
 		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
 	}
 
 	newTweet.CreatedAt = newTweet.CreatedAt.UTC()
+	newTweet.UpdatedAt = newTweet.UpdatedAt.UTC()
 	return &newTweet, nil
 }
 
-func (s *postgresTweetStore) UpdateContent(ctx context.Context, tweetID int64, newContent string) error {
-	query := `UPDATE tweets SET content = $1, created_at = NOW() WHERE id = $2 && user_id = $3`
-}
-func (s *postgresTweetStore) DeleteTweet(ctx context.Context, tweetID int64, userID int64) error
-</file>
-
-<file path="internal/models/error.go">
-package models
-
-import (
-	"encoding/json"
-	"errors"
-	"io"
-
-	"github.com/go-playground/validator/v10"
-)
-
-var (
-    ErrInvalidRequestFormat   = errors.New("リクエスト形式が正しくありません")
-    ErrInvalidJSON            = errors.New("JSONの構文が正しくありません")
-
-	ErrRequiredFieldMissing   = errors.New("必要な項目が不足しています")
-	ErrInvalidUsernameFormat  = errors.New("ユーザーネームの形式が正しくありません(4〜50文字)")
-    ErrInvalidEmailFormat     = errors.New("有効なメールアドレスを入力してください(最大255文字)")
-    ErrInvalidPasswordFormat  = errors.New("パスワードの形式が正しくありません(8〜72文字)")
-	ErrInvalidUserID          = errors.New("無効なユーザーIDです")
-    ErrInvalidTokenFormat     = errors.New("有効トークンを入力してください(最大255文字)")
-	ErrInvalidUrlFormat       = errors.New("Will be written")
-    ErrInvalidContentFormat   = errors.New("contentの形式が正しくありません(最大1000文字)")
-	
-    ErrValueTooLong           = errors.New("入力内容が長すぎます")
-
-	ErrUserNotFound           = errors.New("ユーザーデータが存在しません")
-	ErrSessionNotFound        = errors.New("セッションが見つかりません")
-	
-	ErrSessionExpired         = errors.New("セッションが期限切れです")
-	ErrUsernameConflict       = errors.New("ユーザーネームは既に使用されています")
-	ErrEmailConflict          = errors.New("メールのアドレスは既に使用されています")
-	ErrTokenConflict          = errors.New("トークンは既に存在します")
-	
-	ErrInvalidCredentials     = errors.New("メールアドレスまたはパスワードが正しくありません")
-)
-
-
-func FilterBindError(err error) error {
-    if err == nil {
-        return nil
-    }
-
-    if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-        return ErrInvalidJSON
-    }
-
-    var se *json.SyntaxError
-    var ute *json.UnmarshalTypeError
-    if errors.As(err, &se) || errors.As(err, &ute) {
-        return ErrInvalidJSON
-    }
-
-    var ve validator.ValidationErrors
-    if errors.As(err, &ve) {
-        return ErrInvalidRequestFormat
-    }
-    
-    return ErrInvalidJSON 
+func (s *postgresTweetStore) GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error) {
+	query := `SELECT user_id, content, image_url, created_at, updated_at, is_edited FROM tweets WHERE id = $1`
+	var wantedTweet models.Tweet
+	err := s.database.GetContext(ctx, &wantedTweet, query, tweetID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errcode.ErrTweetNotFound
+		}
+		return nil, fmt.Errorf("ツイートの取得に失敗しました: %w", err)
+	}
+	wantedTweet.CreatedAt = wantedTweet.CreatedAt.UTC()
+	wantedTweet.UpdatedAt = wantedTweet.UpdatedAt.UTC()
+	return &wantedTweet, nil
 }
 
-func GetStatusCode(err error) int {
-    if err == nil {
-        return 200 
-    }
+func (s *postgresTweetStore) UpdateContent(ctx context.Context, newContent string, tweetID int64) (*models.Tweet, error) {
+	query := `UPDATE tweets 
+		SET content = $1, is_edited = true
+		WHERE id = $2 AND content <> $1 
+		RETURNING id, user_id, content, image_url, created_at, updated_at, is_edited`
+	var updatedTweet models.Tweet
+	err := s.database.GetContext(ctx, &updatedTweet, query, newContent, tweetID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errcode.ErrTweetNotFound
+		}
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) {
+			if pqErr.Code == errCodeStringDataRightTruncation {
+				return nil, errcode.ErrValueTooLong
+			}
+		}
+		return nil, fmt.Errorf("ツイートの更新に失敗しました: %w", err)
+	}
 
-    if errors.Is(err, ErrInvalidCredentials) || 
-       errors.Is(err, ErrSessionExpired) || 
-       errors.Is(err, ErrSessionNotFound) {
-        return 401
-    }
-
-    if errors.Is(err, ErrUserNotFound) {
-        return 404
-    }
-
-    if errors.Is(err, ErrUsernameConflict) || 
-       errors.Is(err, ErrEmailConflict) || 
-       errors.Is(err, ErrTokenConflict) {
-        return 409
-    }
-
-    if errors.Is(err, ErrRequiredFieldMissing) ||
-       errors.Is(err, ErrInvalidUsernameFormat) ||
-       errors.Is(err, ErrInvalidEmailFormat) ||
-       errors.Is(err, ErrInvalidPasswordFormat) ||
-       errors.Is(err, ErrInvalidUserID) ||
-       errors.Is(err, ErrInvalidTokenFormat) ||
-       errors.Is(err, ErrInvalidUrlFormat) ||
-       errors.Is(err, ErrInvalidContentFormat ) ||
-       errors.Is(err, ErrValueTooLong) ||
-       errors.Is(err, ErrInvalidJSON) || 
-       errors.Is(err, ErrInvalidRequestFormat) {
-        return 400
-    }
-
-    return 500
+	updatedTweet.CreatedAt = updatedTweet.CreatedAt.UTC()
+	updatedTweet.UpdatedAt = updatedTweet.UpdatedAt.UTC()
+	return &updatedTweet, nil
 }
 
-func GetBusinessCode(err error) string {
-    if err == nil {
-        return ""
-    }
+func (s *postgresTweetStore) DeleteTweet(ctx context.Context, tweetID int64) error {
+	query := `DELETE FROM tweets WHERE id = $1`
+	result, err := s.database.ExecContext(ctx, query, tweetID)
+	if err != nil {
+		return fmt.Errorf("ツイートの削除に失敗しました: %w", err)
+	}
 
-    switch {
-    case errors.Is(err, ErrInvalidJSON):
-        return "INVALID_JSON_FORMAT"
-    case errors.Is(err, ErrInvalidRequestFormat):
-        return "INVALID_REQUEST_FORMAT"
-    case errors.Is(err, ErrRequiredFieldMissing):
-        return "REQUIRED_FIELD_MISSING"
-    case errors.Is(err, ErrInvalidUsernameFormat):
-        return "INVALID_USERNAME_FORMAT"
-    case errors.Is(err, ErrInvalidEmailFormat):
-        return "INVALID_EMAIL_FORMAT"
-    case errors.Is(err, ErrInvalidTokenFormat):
-        return "INVALID_TOKEN_FORMAT"
-    case errors.Is(err, ErrInvalidPasswordFormat):
-        return "INVALID_PASSWORD_FORMAT"
-    case errors.Is(err, ErrInvalidUserID):
-        return "INVALID_USER_ID"
-    case errors.Is(err, ErrInvalidUrlFormat):
-        return "INVALID_URL_FORMAT"
-    case errors.Is(err, ErrInvalidContentFormat) :
-        return "INVALID_CONTENT_FORMAT"
-    case errors.Is(err, ErrValueTooLong):
-        return "VALUE_TOO_LONG"
+	row, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("影響を受けた行数の取得に失敗しました: %w", err)
+	}
 
-    case errors.Is(err, ErrInvalidCredentials):
-        return "INVALID_CREDENTIALS"
-    case errors.Is(err, ErrSessionExpired):
-        return "SESSION_EXPIRED"
-    case errors.Is(err, ErrSessionNotFound):
-        return "SESSION_NOT_FOUND"
+	if row == 0 {
+		return errcode.ErrTweetNotFound
+	}
 
-    case errors.Is(err, ErrUserNotFound):
-        return "USER_NOT_FOUND"
-
-    case errors.Is(err, ErrUsernameConflict):
-        return "USERNAME_CONFLICT"
-    case errors.Is(err, ErrEmailConflict):
-        return "EMAIL_CONFLICT"
-    case errors.Is(err, ErrTokenConflict):
-        return "TOKEN_CONFLICT"
-
-    default:
-        return "INTERNAL_SERVER_ERROR"
-    }
-}
-</file>
-
-<file path="internal/models/response.go">
-package models
-
-type Response struct {
-    Data    any    `json:"data,omitempty"`  
-    Message string `json:"message,omitempty"`  
-    Error   string `json:"error,omitempty"`   
-    Code    string `json:"code,omitempty"`    
-    Meta    any    `json:"meta,omitempty"`    
-}
-
-func Fail(err error) Response {
-    return Response{
-        Error: err.Error(),
-        Code: GetBusinessCode(err),
-    }
-}
-
-func Success(data any) Response {
-    return Response{
-        Data: data,
-    }
-}
-
-func SuccessMsg(msg string) Response{
-    return Response{
-        Message: msg,
-    }
-}
-
-func SuccessWithMeta(data any, meta any) Response {
-    return Response{
-        Data: data,
-        Meta: meta,
-    }
+	return nil
 }
 </file>
 
@@ -1537,6 +2147,7 @@ func IsValidEmail(s string) bool {
 package service
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"strings"
@@ -1566,11 +2177,11 @@ func TestIssue(t *testing.T) {
 				mt.On("Generate", 32).Return(rawToken, nil)
 				mt.On("Hash", rawToken).Return(hashedToken)
 				expectedSession := &models.Session{
-						ID: 1,
-           				UserID: 1,
-            			TokenHash: hashedToken,
-            			CreatedAt: time.Now().UTC(),
-            			ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
+					ID:        1,
+					UserID:    1,
+					TokenHash: hashedToken,
+					CreatedAt: time.Now().UTC(),
+					ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 				}
 
 				ms.On("Create", mock.Anything, mock.MatchedBy(func(s *models.Session) bool {
@@ -1620,12 +2231,10 @@ func TestIssue(t *testing.T) {
 				if tt.errMsg != "" {
 					assert.Contains(t, err.Error(), tt.errMsg)
 				}
-				assert.Nil(t, res)
+				assert.Empty(t, res) 
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, tt.userID, res.Session.UserID)
-				assert.Equal(t, "generated_raw_token_32_characters_long", res.Token)
-				assert.Equal(t, int64(1), res.Session.ID)
+				assert.Equal(t, "generated_raw_token_32_characters_long", res)
 			}
 
 			ms.AssertExpectations(t)
@@ -1653,7 +2262,7 @@ func TestAuthenticate(t *testing.T) {
 					ID:        1,
 					UserID:    10,
 					TokenHash: "hashed_token",
-					ExpiresAt: time.Now().Add(24* time.Hour).UTC(),
+					ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 					CreatedAt: time.Now().UTC(),
 				}, nil)
 			},
@@ -1663,7 +2272,7 @@ func TestAuthenticate(t *testing.T) {
 			name:      "Tokenが空",
 			token:     "",
 			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
-			wantedErr: errcode.ErrRequiredFieldMissing,
+			wantedErr: errcode.ErrSessionNotFound,
 		},
 		{
 			name:      "Tokenが短すぎる",
@@ -1672,8 +2281,8 @@ func TestAuthenticate(t *testing.T) {
 			wantedErr: errcode.ErrInvalidTokenFormat,
 		},
 		{
-			name: "Tokenが長すぎる",
-			token: strings.Repeat("a", 256),
+			name:      "Tokenが長すぎる",
+			token:     strings.Repeat("a", 256),
 			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
 			wantedErr: errcode.ErrInvalidTokenFormat,
 		},
@@ -1698,7 +2307,7 @@ func TestAuthenticate(t *testing.T) {
 			errMsg:    "セッションの取得に失敗しました",
 		},
 		{
-			name: "期限切れ",
+			name:  "期限切れ",
 			token: "valid_token_that_is_long_enough_32char",
 			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
 				tokenHash := "hashed_token"
@@ -1760,72 +2369,29 @@ func TestValidate(t *testing.T) {
 
 	tests := []testCase{
 		{
-			name:      "トークンが完全に空",
+			name:      "【失敗】トークンが空（サービス層でのガード）",
 			token:     "",
 			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {},
-			wantedErr: errcode.ErrRequiredFieldMissing,
+			wantedErr: errcode.ErrSessionNotFound,
 		},
 		{
-			name:      "フォーマット不正",
-			token:     "Bearer" + validToken, 
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {},
-			wantedErr: errcode.ErrInvalidTokenFormat,
-		},
-		{
-			name:      "プレフィックスがBearerではない",
-			token:     "Basic " + validToken,
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {},
-			wantedErr: errcode.ErrInvalidTokenFormat,
-		},
-		{
-			name:      "Bearerヘッダーのみで内容が空",
-			token:     "Bearer ",
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
-			},
-			wantedErr: errcode.ErrRequiredFieldMissing,
-		},
-		{
-			name:      "トークン長が不足",
-			token:     "Bearer short_token",
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
-			},
-			wantedErr: errcode.ErrInvalidTokenFormat,
-		},
-		{
-			name:  "データベース内部エラー",
-			token: "Bearer " + validToken,
+			name:  "【失敗】データベース内部エラー",
+			token: validToken,
 			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
 				mt.On("Hash", validToken).Return("hashed_ok")
 				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(nil, errMockInternal)
 			},
 			wantedErr: errMockInternal,
-			errMsg: "セッションの取得に失敗しました",
+			errMsg:    "セッションの取得に失敗しました",
 		},
 		{
-			name:  "【成功】標準的なBearer認証",
-			token: "Bearer " + validToken,
+			name:  "【成功】標準的な検証",
+			token: validToken,
 			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
 				mt.On("Hash", validToken).Return("hashed_ok")
 				session := &models.Session{
-					ID: 1, 
-					UserID: 10, 
-					TokenHash: "hashed_ok",
-					ExpiresAt: time.Now().Add(23 * time.Hour).UTC(),
-					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
-				}
-				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
-				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
-			},
-			wantedErr: nil,
-		},
-		{
-			name:  "【成功】Bearerの大小文字を区別しない",
-			token: "bEaReR " + validToken,
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
-				mt.On("Hash", validToken).Return("hashed_ok")
-				session := &models.Session{
-					ID: 1,
-					UserID: 10, 
+					ID:        1,
+					UserID:    10,
 					TokenHash: "hashed_ok",
 					ExpiresAt: time.Now().Add(23 * time.Hour).UTC(),
 					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
@@ -1837,13 +2403,13 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:  "【成功】セッションの自動更新がトリガーされる",
-			token: "Bearer " + validToken,
+			token: validToken,
 			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
 				mt.On("Hash", validToken).Return("hashed_ok")
 				oldExpiry := time.Now().Add(1 * time.Hour).UTC()
 				session := &models.Session{
-					ID: 1, 
-					UserID: 10, 
+					ID:        1,
+					UserID:    10,
 					TokenHash: "hashed_ok",
 					ExpiresAt: oldExpiry,
 					CreatedAt: time.Now().Add(-23 * time.Hour).UTC(),
@@ -1851,20 +2417,20 @@ func TestValidate(t *testing.T) {
 				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
 				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
 				ms.On("UpdateExpiresAt", mock.Anything, mock.MatchedBy(func(t time.Time) bool {
-            		expected := time.Now().Add(models.SessionDuration).UTC()
-           			 return t.After(oldExpiry) && t.Sub(expected).Abs() < 10*time.Second
-        		}), int64(1)).Return(nil)
+					expected := time.Now().Add(models.SessionDuration).UTC()
+					return t.After(oldExpiry) && t.Sub(expected).Abs() < 10*time.Second
+				}), int64(1)).Return(nil)
 			},
 			wantedErr: nil,
 		},
 		{
 			name:  "【失敗】セッションは有効だがユーザーが存在しない（退会済みなど）",
-			token: "Bearer " + validToken,
+			token: validToken,
 			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
 				mt.On("Hash", validToken).Return("hashed_ok")
 				session := &models.Session{
-					ID: 1,
-					UserID: 10, 
+					ID:        1,
+					UserID:    10,
 					TokenHash: "hashed_ok",
 					ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
@@ -1894,14 +2460,13 @@ func TestValidate(t *testing.T) {
 				}
 				assert.Nil(t, res)
 			} else {
-				if tt.name == "【成功】セッションの自動更新がトリガーされ、正しく更新されること" {
-    			require.NoError(t, err)	
-    				expectedNewExpiry := time.Now().Add(models.SessionDuration).UTC()
-    				assert.WithinDuration(t, expectedNewExpiry, res.ExpiresAt, 10*time.Second)
-    				assert.True(t, res.ExpiresAt.After(time.Now().Add(22*time.Hour))) 
-				}
 				require.NoError(t, err)
 				assert.NotNil(t, res)
+
+				if tt.name == "【成功】セッションの自動更新がトリガーされる" {
+					expectedNewExpiry := time.Now().Add(models.SessionDuration).UTC()
+					assert.WithinDuration(t, expectedNewExpiry, res.ExpiresAt, 10*time.Second)
+				}
 			}
 
 			ms.AssertExpectations(t)
@@ -1949,7 +2514,7 @@ func TestRefreshSession(t *testing.T) {
 			ms := new(mockSessionStore)
 			mt := new(mockTokenManager)
 			mu := new(mockUserService)
-			
+
 			tt.setupMock(ms)
 			svc := NewSessionService(ms, mu, mt)
 
@@ -1971,114 +2536,64 @@ func TestRefreshSession(t *testing.T) {
 }
 
 func TestRevoke(t *testing.T) {
-    type testCase struct {
-        name           string
-        header         string 
-        setupMock      func(ms *mockSessionStore, mt *mockTokenManager)
-        wantedErr      error
-        expectContains string
-    }
+	type testCase struct {
+		name           string
+		SessionID      int64
+		setupMock      func(ms *mockSessionStore)
+		wantedErr      error
+		expectContains string
+	}
 
-    validToken := "valid_token_that_is_long_enough_32char"
-    validHeader := "Bearer " + validToken
 
-    tests := []testCase{
-        {
-            name:   "正常にログアウトできる(正規のBearerヘッダー)",
-            header: validHeader,
-            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
-                mt.On("Hash", validToken).Return("token_hash")
-                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(nil)
-            },
-        },
-        {
-            name:      "ヘッダーが空",
-            header:    "",
-            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
-            wantedErr: errcode.ErrSessionNotFound,
-        },
-        {
-            name:      "Bearerプレフィックスがない",
-            header:    validToken, 
-            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
-            wantedErr: errcode.ErrSessionNotFound,
-        },
-        {
-            name:      "Bearerの綴りがおかしい",
-            header:    "Beareeee " + validToken,
-            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
-            wantedErr: errcode.ErrSessionNotFound,
-        },
-        {
-            name:   "大文字のBEARERでも認識されること",
-            header: "BEARER " + validToken,
-            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
-                mt.On("Hash", validToken).Return("token_hash")
-                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(nil)
-            },
-        },
+	tests := []testCase{
 		{
-            name:      "tokenが空(Bearerのみ)",
-            header:    "Bearer ",
-            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
-            wantedErr: errcode.ErrSessionNotFound,
-        },
-		{
-    		name:   "tokenが31文字(短すぎる)",
-    		header: "Bearer " + strings.Repeat("a", 31),
-    		setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
-    		wantedErr: errcode.ErrSessionNotFound,
+			name:  "【成功】正常にログアウトできる",
+			SessionID : int64(101),
+			setupMock: func(ms *mockSessionStore) {
+				ms.On("DeleteBySessionID", mock.Anything,  int64(101)).Return(nil)
+			},
+			wantedErr: nil,
 		},
 		{
-		    name:   "tokenが256文字(長すぎる)",
-    		header: "Bearer " + strings.Repeat("a", 256),
-   		    setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
-    		wantedErr: errcode.ErrSessionNotFound,
+			name:      "【失敗】無効なセッションID",
+			SessionID : int64(0),
+			setupMock: func(ms *mockSessionStore) {},
+			wantedErr: errcode.ErrInvalidSessionID,
 		},
 		{
-    		name:   "tokenがちょうど32文字(境界値・成功)",
-    		header: "Bearer " + strings.Repeat("a", 32),
-    		setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
-       			mt.On("Hash", strings.Repeat("a", 32)).Return("hash_32")
-        		ms.On("DeleteByHash", mock.Anything, "hash_32").Return(nil)
-    		},
-    		wantedErr: nil,
+			name:  "【失敗】DBエラー時にラップされたエラーを返す",
+			SessionID : int64(101),
+			setupMock: func(ms *mockSessionStore) {
+				ms.On("DeleteBySessionID", mock.Anything, int64(101)).Return(errMockInternal)
+			},
+			wantedErr:      errMockInternal,
+			expectContains: "セッションの削除に失敗しました",
 		},
-        {
-            name:   "DBエラー時にラップされたエラーを返す",
-            header: validHeader,
-            setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
-                mt.On("Hash", validToken).Return("token_hash")
-                ms.On("DeleteByHash", mock.Anything, "token_hash").Return(errMockInternal)
-            },
-            wantedErr:      errMockInternal,
-            expectContains: "セッションの削除に失敗しました",
-        },
-    }
+	}
 
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            ms := new(mockSessionStore)
-            mt := new(mockTokenManager)
-            mu := new(mockUserService)
-            svc := NewSessionService(ms, mu, mt)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ms := new(mockSessionStore)
+			mt := new(mockTokenManager)
+			mu := new(mockUserService)
+			svc := NewSessionService(ms, mu, mt)
 
-            tt.setupMock(ms, mt)
+			tt.setupMock(ms)
 
-            err := svc.Revoke(context.Background(), tt.header)
+			err := svc.Revoke(context.Background(), tt.SessionID)
 
-            if tt.wantedErr != nil {
-                assert.ErrorIs(t, err, tt.wantedErr)
-                if tt.expectContains != "" {
-                    assert.Contains(t, err.Error(), tt.expectContains)
-                }
-            } else {
-                assert.NoError(t, err)
-            }
-            ms.AssertExpectations(t)
-            mt.AssertExpectations(t)
-        })
-    }
+			if tt.wantedErr != nil {
+				assert.ErrorIs(t, err, tt.wantedErr)
+				if tt.expectContains != "" {
+					assert.Contains(t, err.Error(), tt.expectContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+			ms.AssertExpectations(t)
+			mt.AssertExpectations(t)
+		})
+	}
 }
 </file>
 
@@ -2086,10 +2601,10 @@ func TestRevoke(t *testing.T) {
 package service
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -2097,7 +2612,7 @@ type SessionStore interface {
 	Create(ctx context.Context, session *models.Session) (*models.Session, error)
 	GetByHash(ctx context.Context, tokenHash string) (*models.Session, error)
 	UpdateExpiresAt(ctx context.Context, expiresAt time.Time, id int64) error
-    DeleteByHash(ctx context.Context, tokenHash string) error 
+    DeleteBySessionID(ctx context.Context, sessionID int64) error
 }
 
 type UserInfoProvider interface {
@@ -2125,31 +2640,23 @@ func NewSessionService(ss SessionStore, usvc UserInfoProvider, tm TokenManager) 
 } 
 
 func (s *sessionService) validateAndHash(token string) (string, error) {
-    if token == "" || len(token) < 32 || len(token) > 255 {
+    if token == ""  {
         return "", errcode.ErrSessionNotFound
+    }
+    if len(token) < 32 || len(token) > 255 {
+        return "", errcode.ErrInvalidTokenFormat
     }
     return s.tokenManager.Hash(token), nil
 }
 
-func (h *sessionService) extractBearerToken(header string) string {
-    if header == "" {
-        return ""
-    }
-    parts := strings.SplitN(header, " ", 2)
-    if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
-        return strings.TrimSpace(parts[1])
-    }
-    return ""
-}
-
-func (s *sessionService) Issue(ctx context.Context, userID int64) (*models.IssueResponse, error) {
+func (s *sessionService) Issue(ctx context.Context, userID int64) (string, error) {
     if userID <= 0 {
-        return nil, errcode.ErrRequiredFieldMissing
+        return "", errcode.ErrRequiredFieldMissing
     }
 
     token, err := s.tokenManager.Generate(32)
     if err != nil {
-        return nil, fmt.Errorf("トークンの生成に失敗しました: %w", err)
+        return "", fmt.Errorf("トークンの生成に失敗しました: %w", err)
     }
 
     sessionData := &models.Session{
@@ -2158,15 +2665,12 @@ func (s *sessionService) Issue(ctx context.Context, userID int64) (*models.Issue
         ExpiresAt: time.Now().Add(24 * time.Hour).UTC(), 
     }
 
-    session, err := s.sessionStore.Create(ctx, sessionData)
+    _, err = s.sessionStore.Create(ctx, sessionData)
     if err != nil {
-        return nil, fmt.Errorf("発行に失敗しました: %w", err)
+        return "", fmt.Errorf("発行に失敗しました: %w", err)
     }
     
-    return &models.IssueResponse{
-        Session: session,
-        Token: token,
-    }, nil
+    return token, nil
 }
 
 func (s *sessionService) authenticate(ctx context.Context, token string) (*models.Session, error) {
@@ -2186,11 +2690,7 @@ func (s *sessionService) authenticate(ctx context.Context, token string) (*model
 }
 
 func (s *sessionService) Validate(ctx context.Context, token string) (*models.Session, error){
-    finalToken := s.extractBearerToken(token)
-    if finalToken == "" {
-        return nil, errcode.ErrSessionNotFound
-    }
-    session, err := s.authenticate(ctx, finalToken)
+    session, err := s.authenticate(ctx, token)
     if err != nil {
         return nil, err
     }
@@ -2218,16 +2718,11 @@ func (s *sessionService) refreshSession(ctx context.Context, session *models.Ses
     return nil
 }
 
-func (s *sessionService) Revoke(ctx context.Context, token string) error {
-    finalToken := s.extractBearerToken(token)
-    if finalToken == "" {
-        return errcode.ErrSessionNotFound
+func (s *sessionService) Revoke(ctx context.Context, sessionID int64) error {
+    if sessionID <= 0 {
+        return errcode.ErrInvalidSessionID
     }
-    tokenHash, err := s.validateAndHash(finalToken)
-    if err != nil {
-        return err
-    }
-    err = s.sessionStore.DeleteByHash(ctx, tokenHash)
+    err := s.sessionStore.DeleteBySessionID(ctx, sessionID)
     if err != nil {
         return fmt.Errorf("セッションの削除に失敗しました: %w", err)
     }
@@ -2240,14 +2735,16 @@ func (s *sessionService) Revoke(ctx context.Context, token string) error {
 package service
 
 import (
+	"aita/internal/dto"
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"aita/internal/pkg/utils"
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -2255,80 +2752,68 @@ import (
 func TestPostTweet(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	imageURL := utils.StringPtr("https://example.com/mock.jpg")
-	tests := []struct{
-		name			string
-		userID          int64
-		inputBody       *dto.CreateTweetRequest
-		setupMock       func(mt *mockTweetStore)
-		wantedErr       error
+	tests := []struct {
+		name      string
+		userID    int64
+		inputBody *dto.CreateTweetRequest
+		setupMock func(mt *mockTweetStore)
+		wantedErr error
+		errMsg    string
 	}{
 		{
-			name: "発送成功",
+			name:   "【正常系】ツイート投稿成功",
 			userID: 101,
 			inputBody: &dto.CreateTweetRequest{
-				Content: "Hello world",
+				Content:  "Hello world",
 				ImageURL: imageURL,
 			},
 			setupMock: func(mt *mockTweetStore) {
 				expectedTweet := &models.Tweet{
-					ID: 1,
-					UserID: 101,
-					Content:"Hello world",
-					ImageURL: imageURL,
+					ID:        1,
+					UserID:    101,
+					Content:   "Hello world",
+					ImageURL:  imageURL,
 					CreatedAt: time.Now().UTC(),
+					UpdatedAt: time.Now().UTC(),
 				}
 				mt.On("CreateTweet", mock.Anything, mock.MatchedBy(func(t *models.Tweet) bool {
-					return t.UserID == 101 && t.Content == "Hello world"
+					return t.UserID == 101 && t.Content == "Hello world" && t.ImageURL == imageURL
 				})).Return(expectedTweet, nil)
 			},
 			wantedErr: nil,
 		},
 		{
-			name: "パラメーターエラー、無効なユーザーID",
+			name:   "【異常系】無効なユーザーID",
 			userID: -1,
-			inputBody:&dto.CreateTweetRequest{
+			inputBody: &dto.CreateTweetRequest{
 				Content: "Hello world",
 			},
-			setupMock: func(mt *mockTweetStore){},
+			setupMock: func(mt *mockTweetStore) {},
 			wantedErr: errcode.ErrInvalidUserID,
 		},
 		{
-			name: "パラメーターエラー、コンテントは空である",
+			name:   "【異常系】コンテンツが空（必須項目不足）",
 			userID: 101,
-			inputBody:&dto.CreateTweetRequest{
+			inputBody: &dto.CreateTweetRequest{
 				Content: "",
 			},
-			setupMock: func(mt *mockTweetStore){},
+			setupMock: func(mt *mockTweetStore) {},
 			wantedErr: errcode.ErrRequiredFieldMissing,
 		},
 		{
-			name: "パラメーターエラー、無効なコンテント",
-			userID: 101,
-			inputBody:&dto.CreateTweetRequest{
-				Content: strings.Repeat("a", 1001),
-			},
-			setupMock: func(mt *mockTweetStore){},
-			wantedErr: errcode.ErrInvalidContentFormat,
-		},
-		{
-			name: "データベースエラー,ユーザーが存在しない場合",
+			name:   "【異常系】データベースエラー（挿入失敗）",
 			userID: 99999,
 			inputBody: &dto.CreateTweetRequest{
-				Content: "Hello world",
-				ImageURL: utils.StringPtr("https://example.com/mock.jpg"),
+				Content:  "Hello world",
+				ImageURL: imageURL,
 			},
 			setupMock: func(mt *mockTweetStore) {
 				mt.On("CreateTweet", mock.Anything, mock.MatchedBy(func(t *models.Tweet) bool {
-					if t.UserID != 99999 || t.Content != "Hello world" {
-						return false
-					}	
-					if t.ImageURL == nil || *t.ImageURL != *imageURL {
-						return false
-					}
-					return true
+					return t.UserID == 99999 && t.Content == "Hello world"
 				})).Return(nil, errMockInternal)
 			},
 			wantedErr: errMockInternal,
+			errMsg:    "ツイートの挿入に失敗しました",
 		},
 	}
 
@@ -2338,17 +2823,405 @@ func TestPostTweet(t *testing.T) {
 			tt.setupMock(mt)
 			svc := NewTweetService(mt)
 			ctx := context.Background()
-			res, err := svc.PostTweet(ctx, tt.userID, tt.inputBody)
+
+			res, err := svc.PostTweet(ctx, tt.userID, tt.inputBody.Content, tt.inputBody.ImageURL)
 
 			if tt.wantedErr != nil {
-				require.Error(t, err)
-				require.ErrorIs(t, err, tt.wantedErr,"期待されるエラータイプが一致します")
-				require.Nil(t, res, "エラーが発生した場合は、レスポンスはnilであるべきです")
+				assert.ErrorIs(t, err, tt.wantedErr, "期待されるエラータイプが一致します")
+				assert.Nil(t, res, "エラーが発生した場合は、レスポンスはnilであるべきです")
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, res)
-				require.Equal(t, tt.inputBody.Content, res.Content)
-				require.Equal(t, tt.inputBody.ImageURL, res.ImageURL)
+				assert.Equal(t, tt.inputBody.Content, res.Content)
+				assert.Equal(t, tt.inputBody.ImageURL, res.ImageURL)
+				assert.Equal(t, tt.userID, res.UserID)
+				assert.Equal(t, time.UTC, res.CreatedAt.Location())
+				assert.Equal(t, time.UTC, res.UpdatedAt.Location())
+			}
+
+			mt.AssertExpectations(t)
+		})
+	}
+}
+
+func TestFetchTweet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name         string
+		inputTweetID int64
+		setupMock    func(mt *mockTweetStore)
+		wantedErr    error
+		errMsg       string
+	}{
+		{
+			name:         "正常系: ツイートの取得に成功した",
+			inputTweetID: 101,
+			setupMock: func(mt *mockTweetStore) {
+				expectedTweet := &models.Tweet{
+					ID:        101,
+					Content:   "mock",
+					CreatedAt: time.Now().UTC(),
+					UpdatedAt: time.Now().UTC(),
+				}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(101)).Return(expectedTweet, nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:         "異常系:パラメーターエラー, 無効なツイートID",
+			inputTweetID: 0,
+			setupMock:    func(mt *mockTweetStore) {},
+			wantedErr:    errcode.ErrInvalidTweetID,
+		},
+		{
+			name:         "異常系：データベースエラー,ツイートが存在しない場合",
+			inputTweetID: 101,
+			setupMock: func(mt *mockTweetStore) {
+				mt.On("GetTweetByTweetID", mock.Anything, int64(101)).Return(nil, errcode.ErrTweetNotFound)
+			},
+			wantedErr: errcode.ErrTweetNotFound,
+			errMsg:    "ツイート情報の取得に失敗しました",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mt := new(mockTweetStore)
+			tt.setupMock(mt)
+			svc := NewTweetService(mt)
+			ctx := context.Background()
+			res, err := svc.FetchTweet(ctx, tt.inputTweetID)
+
+			if tt.wantedErr != nil {
+				assert.ErrorIs(t, err, tt.wantedErr)
+				assert.Nil(t, res)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), "ツイート情報の取得に失敗しました")
+				}
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				assert.Equal(t, tt.inputTweetID, res.ID)
+				assert.Equal(t, "mock", res.Content)
+				assert.Equal(t, time.UTC, res.CreatedAt.Location())
+				assert.Equal(t, time.UTC, res.UpdatedAt.Location())
+			}
+
+			mt.AssertExpectations(t)
+		})
+	}
+}
+
+func TestToMyTweet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tweetID := int64(101)
+	userID := int64(102)
+	tests := []struct {
+		name         string
+		inputTweetID int64
+		inputUserID  int64
+		setupMock    func(mt *mockTweetStore)
+		wantedErr    error
+		errMsg       string
+	}{
+		{
+			name:         "正常系: 自分のツイートの取得に成功した",
+			inputTweetID: 101,
+			inputUserID:  102,
+			setupMock: func(mt *mockTweetStore) {
+				expectedTweet := &models.Tweet{
+					ID:        tweetID,
+					UserID:    userID,
+					Content:   "mock",
+					CreatedAt: time.Now().UTC(),
+					UpdatedAt: time.Now().UTC(),
+				}
+				mt.On("GetTweetByTweetID", mock.Anything, tweetID).Return(expectedTweet, nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:         "異常系:パラメーターエラー, 無効なツイートID",
+			inputTweetID: 0,
+			inputUserID:  userID,
+			setupMock:    func(mt *mockTweetStore) {},
+			wantedErr:    errcode.ErrInvalidTweetID,
+		},
+		{
+			name:         "異常系:パラメーターエラー, 無効なuserID",
+			inputTweetID: tweetID,
+			inputUserID:  0,
+			setupMock:    func(mt *mockTweetStore) {},
+			wantedErr:    errcode.ErrInvalidUserID,
+		},
+		{
+			name:         "異常系：データベースエラー,ツイートが存在しない場合",
+			inputTweetID: tweetID,
+			inputUserID:  userID,
+			setupMock: func(mt *mockTweetStore) {
+				mt.On("GetTweetByTweetID", mock.Anything, tweetID).Return(nil, errcode.ErrUserNotFound)
+			},
+			wantedErr: errcode.ErrUserNotFound,
+			errMsg:    "ツイート情報の取得に失敗しました",
+		},
+		{
+			name:         "異常系：権限がない",
+			inputTweetID: 101,
+			inputUserID:  102,
+			setupMock: func(mt *mockTweetStore) {
+				abnormalTweet := &models.Tweet{
+					ID:        tweetID,
+					UserID:    999,
+					Content:   "mock",
+					CreatedAt: time.Now().UTC(),
+					UpdatedAt: time.Now().UTC(),
+				}
+				mt.On("GetTweetByTweetID", mock.Anything, tweetID).Return(abnormalTweet, nil)
+			},
+			wantedErr: errcode.ErrForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mt := new(mockTweetStore)
+			tt.setupMock(mt)
+			svc := NewTweetService(mt)
+			ctx := context.Background()
+			res, err := svc.ToMyTweet(ctx, tt.inputTweetID, tt.inputUserID)
+
+			if tt.wantedErr != nil {
+				assert.ErrorIs(t, err, tt.wantedErr)
+				assert.Nil(t, res)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), "ツイート情報の取得に失敗しました")
+				}
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				assert.Equal(t, tt.inputTweetID, res.ID)
+				assert.Equal(t, "mock", res.Content)
+				assert.Equal(t, time.UTC, res.CreatedAt.Location())
+				assert.Equal(t, time.UTC, res.UpdatedAt.Location())
+			}
+
+			mt.AssertExpectations(t)
+		})
+	}
+}
+
+func TestEditTweet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		inputContent string
+		inputTweetID int64
+		inputUserID  int64
+		setupMock    func(mt *mockTweetStore)
+		wantedErr    error
+		errMsg       string
+	}{
+		{
+			name:         "正常系：10分以内の編集が正常に完了する",
+			inputContent: "updated content",
+			inputTweetID: 101,
+			inputUserID:  102,
+			setupMock: func(mt *mockTweetStore) {
+				existingTweet := &models.Tweet{
+					ID:        101,
+					UserID:    102,
+					Content:   "content",
+					CreatedAt: time.Now().UTC().Add(-5 * time.Minute),
+					UpdatedAt: time.Now().UTC().Add(-5 * time.Minute),
+				}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(101)).Return(existingTweet, nil)
+
+				updatedTweet := &models.Tweet{
+					ID: 101, 
+					UserID: 102, 
+					Content: "updated content",	
+					CreatedAt: time.Now().UTC().Add(-5 * time.Minute),
+					UpdatedAt: time.Now().UTC(),
+					IsEdited: true,
+				}
+				mt.On("UpdateContent", mock.Anything, "updated content", int64(101)).Return(updatedTweet, nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:         "異常系：投稿から10分以上経過しているため編集不可",
+			inputContent: "too late",
+			inputTweetID: 101,
+			inputUserID:  102,
+			setupMock: func(mt *mockTweetStore) {
+				oldTweet := &models.Tweet{
+					ID:        101,
+					UserID:    102,
+					Content:   "content",
+					CreatedAt: time.Now().UTC().Add(-11 * time.Minute),
+				}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(101)).Return(oldTweet, nil)
+			},
+			wantedErr: errcode.ErrEditTimeExpired,
+		},
+		{
+			name:         "異常系：他のユーザーのツイートは編集不可（権限エラー）",
+			inputContent: "hack",
+			inputTweetID: 101,
+			inputUserID:  999,
+			setupMock: func(mt *mockTweetStore) {
+				existingTweet := &models.Tweet{
+					ID:        101,
+					UserID:    102,
+					Content:   "content",
+					CreatedAt: time.Now().UTC(),
+				}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(101)).Return(existingTweet, nil)
+			},
+			wantedErr: errcode.ErrForbidden,
+		},
+		{
+			name:         "正常系：内容に変更がない場合は早期リターンする",
+			inputContent: "same content",
+			inputTweetID: 101,
+			inputUserID:  102,
+			setupMock: func(mt *mockTweetStore) {
+				existing := &models.Tweet{
+					ID:        101,
+					UserID:    102,
+					Content:   "same content",
+					CreatedAt: time.Now().UTC(),
+				}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(101)).Return(existing, nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:         "異常系：データベースエラーによる更新失敗",
+			inputContent: "new content",
+			inputTweetID: 101,
+			inputUserID:  102,
+			setupMock: func(mt *mockTweetStore) {
+				existingTweet := &models.Tweet{
+					ID:        101,
+					UserID:    102,
+					Content:   "content",
+					CreatedAt: time.Now().UTC(),
+				}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(101)).Return(existingTweet, nil)
+				mt.On("UpdateContent", mock.Anything, "new content", int64(101)).Return(nil, errMockInternal)
+			},
+			wantedErr: errMockInternal,
+			errMsg:    "ツイート編集に失敗しました",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mt := new(mockTweetStore)
+			tt.setupMock(mt)
+			svc := NewTweetService(mt)
+
+			res, bool, err := svc.EditTweet(context.Background(), tt.inputContent, tt.inputTweetID, tt.inputUserID)
+
+			if tt.wantedErr != nil {
+				if tt.errMsg != "" {
+					assert.ErrorIs(t, err, tt.wantedErr)
+					assert.Contains(t, err.Error(), tt.errMsg)
+					t.Logf("エラーは %v\n", err)
+					assert.Equal(t, false, bool)
+				}
+				assert.ErrorIs(t, err, tt.wantedErr)
+				assert.Nil(t, res)
+				assert.Equal(t, false, bool)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, res)
+				require.Equal(t, tt.inputContent, res.Content)
+			}
+
+			mt.AssertExpectations(t)
+		})
+	}
+}
+
+func TestRemoveTweet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		inputTweetID int64
+		inputUserID  int64
+		setupMock    func(mt *mockTweetStore)
+		wantedErr    error
+		errMsg       string
+	}{
+		{
+			name:         "正常系: 自分のツイートが正常に削除される",
+			inputTweetID: 201,
+			inputUserID:  202,
+			setupMock: func(mt *mockTweetStore) {
+				existingTweet := &models.Tweet{ID: 201, UserID: 202}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(201)).Return(existingTweet, nil)
+				mt.On("DeleteTweet", mock.Anything, int64(201)).Return(nil)
+			},
+			wantedErr: nil,
+		},
+		{
+			name:         "異常系: ツイートが存在しない場合は削除不可",
+			inputTweetID: 404,
+			inputUserID:  202,
+			setupMock: func(mt *mockTweetStore) {
+				mt.On("GetTweetByTweetID", mock.Anything, int64(404)).Return(nil, errcode.ErrTweetNotFound)
+			},
+			wantedErr: errcode.ErrTweetNotFound,
+		},
+		{
+			name:         "異常系: 他人のツイートは削除不可（権限エラー）",
+			inputTweetID: 201,
+			inputUserID:  999,
+			setupMock: func(mt *mockTweetStore) {
+				existingTweet := &models.Tweet{ID: 201, UserID: 202}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(201)).Return(existingTweet, nil)
+			},
+			wantedErr: errcode.ErrForbidden,
+		},
+		{
+			name:         "異常系: DBエラーによる削除失敗",
+			inputTweetID: 201,
+			inputUserID:  202,
+			setupMock: func(mt *mockTweetStore) {
+				existingTweet := &models.Tweet{ID: 201, UserID: 202}
+				mt.On("GetTweetByTweetID", mock.Anything, int64(201)).Return(existingTweet, nil)
+				mt.On("DeleteTweet", mock.Anything, int64(201)).Return(errMockInternal)
+			},
+			wantedErr: errMockInternal,
+			errMsg:    "ツイートの削除に失敗しました",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mt := new(mockTweetStore)
+			tt.setupMock(mt)
+			svc := NewTweetService(mt)
+			ctx := context.Background()
+
+			err := svc.RemoveTweet(ctx, tt.inputTweetID, tt.inputUserID)
+
+			if tt.wantedErr != nil {
+				if tt.errMsg != "" {
+					assert.ErrorIs(t, err, tt.wantedErr)
+					assert.Contains(t, err.Error(), tt.errMsg)
+					t.Logf("エラーは %v\n", err)
+				}
+				assert.ErrorIs(t, err, tt.wantedErr)
+			} else {
+				require.NoError(t, err)
 			}
 
 			mt.AssertExpectations(t)
@@ -2361,14 +3234,12 @@ func TestPostTweet(t *testing.T) {
 package service
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
-	"aita/internal/pkg/utils"
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 )
-
 
 type UserStore interface {
 	Create(ctx context.Context, user *models.User) (*models.User, error)
@@ -2377,37 +3248,35 @@ type UserStore interface {
 }
 
 type PasswordHasher interface {
-	Generate(password string) (string, error) 
+	Generate(password string) (string, error)
 	Compare(hashedPassword, password string) error
 }
 type userService struct {
 	userStore UserStore
-	hasher PasswordHasher
+	hasher    PasswordHasher
 }
 
-func NewUserService(us UserStore, h PasswordHasher) *userService{
+func NewUserService(us UserStore, h PasswordHasher) *userService {
 	return &userService{
 		userStore: us,
-		hasher: h,
+		hasher:    h,
 	}
 }
 
-func (s *userService) Register(ctx context.Context, req *dto.SignupRequest) (*models.User, error) {
-	req.Username = strings.TrimSpace(req.Username)
-	req.Email = strings.TrimSpace(req.Email)
-	if err := models.IsValidSignUpReq(req); err != nil {
-		return nil, err
-	}
+func (s *userService) Register(ctx context.Context, username, email,password string) (*models.User, error) {
+	if username == "" || email == "" || password == "" {
+        return nil, errcode.ErrRequiredFieldMissing
+    }
 
-	hash, err := s.hasher.Generate(req.Password)
+	hash, err := s.hasher.Generate(password)
 	if err != nil {
 		return nil, fmt.Errorf("パスワードをハッシュ化に失敗しました: %w", err)
 	}
 
 	user := &models.User{
-		Username: 		req.Username,
-		Email:    		req.Email,
-		PasswordHash:   hash,
+		Username:     username,
+		Email:        email,
+		PasswordHash: hash,
 	}
 
 	user, err = s.userStore.Create(ctx, user)
@@ -2417,28 +3286,31 @@ func (s *userService) Register(ctx context.Context, req *dto.SignupRequest) (*mo
 	return user, nil
 }
 
+func (s *userService) existsByEmail(ctx context.Context, email string) (*models.User, error) {
+	if email == "" {
+		return nil, errcode.ErrRequiredFieldMissing
+	}
+
+	user, err := s.userStore.GetByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, errcode.ErrUserNotFound) {
+			return nil, errcode.ErrInvalidCredentials
+		}
+		return nil, fmt.Errorf("ユーザー情報の取得に失敗しました: %w", err)
+	}
+
+	return user, nil
+}
+
 
 func (s *userService) Login(ctx context.Context, email, password string) (*models.User, error) {
 	if email == "" || password == "" {
 		return nil, errcode.ErrRequiredFieldMissing
 	}
-	
-	cleanEmail := strings.TrimSpace(email)
-	if !utils.IsValidEmail(cleanEmail) {
-		return nil,  errcode.ErrInvalidEmailFormat
-	}
-	if len(password) < 3 || len (password) > 72 {
-		return nil,  errcode.ErrInvalidPasswordFormat
-	}
-    
-	user, err := s.userStore.GetByEmail(ctx, cleanEmail)
+	user, err := s.existsByEmail(ctx, email) 
 	if err != nil {
-		if errors.Is(err, errcode.ErrUserNotFound) {
-            return nil, errcode.ErrInvalidCredentials
-        }
-        return nil, fmt.Errorf("ユーザー情報の取得に失敗しました: %w", err)
+		return nil, err
 	}
-
 	err = s.hasher.Compare(user.PasswordHash, password)
 	if err != nil {
 		return nil, errcode.ErrInvalidCredentials
@@ -2459,7 +3331,6 @@ func (s *userService) ToMyPage(ctx context.Context, userID int64) (*models.User,
 </file>
 
 <file path="docker-compose.yml">
-version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
@@ -2501,6 +3372,8 @@ package api
 
 import (
 	"aita/internal/contextkeys"
+	"aita/internal/dto"
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"encoding/json"
 	"net/http"
@@ -2513,98 +3386,125 @@ import (
 )
 
 func TestAuthMiddleware(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	gin.SetMode(gin.TestMode)
+    gin.SetMode(gin.TestMode)
 
-	tests := []struct {
-		name           string
-		authHeader     string
-		setupMock      func(m *mockSessionService)
-		expectedStatus int
-		expectedUserID int64
-	}{
-		{
-			name:       "認証成功: 有効なBearerトークン",
-			authHeader: "Bearer valid_token",
-			setupMock: func(m *mockSessionService) {
-				session := &models.Session{UserID: 123}
-				m.On("Validate", mock.Anything, "Bearer valid_token").Return(session, nil)
-			},
-			expectedStatus: http.StatusOK,
-			expectedUserID: 123,
-		},
-		{
-			name:       "認証成功:大文字でもServiceが許容する場合",
-			authHeader: "BEARER raw_token_string",
-			setupMock: func(m *mockSessionService) {
-				session := &models.Session{UserID: 456}
-				m.On("Validate", mock.Anything, "raw_token_string").Return(session, nil)
-			},
-			expectedStatus: http.StatusOK,
-			expectedUserID: 456,
-		},
-		{
-			name:       "未認証：ヘッダーが空",
-			authHeader: "",
-			setupMock: func(m *mockSessionService) {
-				m.On("Validate", mock.Anything, "").Return(nil, errcode.ErrSessionNotFound)
-			},
-			expectedStatus: http.StatusUnauthorized,
-		},
-		{
-			name:       "認証失敗：トークンが期限切れ",
-			authHeader: "Bearer expired_token",
-			setupMock: func(m *mockSessionService) {
-				m.On("Validate", mock.Anything, "Bearer expired_token").Return(nil, errcode.ErrSessionExpired)
-			},
-			expectedStatus: http.StatusUnauthorized,
-		},
-		{
-			name:       "ユーザー不在：トークンは正しいがユーザーが削除された",
-			authHeader: "Bearer valid_but_no_user",
-			setupMock: func(m *mockSessionService) {
-				m.On("Validate", mock.Anything, "Bearer valid_but_no_user").Return(nil, errcode.ErrUserNotFound)
-			},
-			expectedStatus: http.StatusNotFound, 
-		},
-	}
+    session123 := &models.Session{ID: 10, UserID: 123}
+    session456 := &models.Session{ID: 20, UserID: 456}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mSession := new(mockSessionService)
-			tt.setupMock(mSession)
+    tests := []struct {
+        name            string
+        authHeader      string
+        setupMock       func(m *mockSessionService)
+        expectedStatus  int
+        expectedSession *models.Session 
+    }{
+        {
+            name:       "【成功】有効なBearerトークン",
+            authHeader: "Bearer valid_token",
+            setupMock: func(m *mockSessionService) {
+                m.On("Validate", mock.Anything, "valid_token").Return(session123, nil)
+            },
+            expectedStatus:  http.StatusOK,
+            expectedSession: session123,
+        },
+        {
+            name:       "【成功】大文字のBEARERでも認識される",
+            authHeader: "BEARER upper_token",
+            setupMock: func(m *mockSessionService) {
+                m.On("Validate", mock.Anything, "upper_token").Return(session456, nil)
+            },
+            expectedStatus:  http.StatusOK,
+            expectedSession: session456,
+        },
+        {
+            name:            "【失败】ヘッダーが空 (Serviceは呼ばれない)",
+            authHeader:      "",
+            setupMock:       func(m *mockSessionService) {},
+            expectedStatus:  http.StatusUnauthorized,
+            expectedSession: nil,
+        },
+        {
+            name:            "【失败】Bearerプレフィックスがない (Serviceは呼ばれない)",
+            authHeader:      "just_token_without_bearer",
+            setupMock:       func(m *mockSessionService) {},
+            expectedStatus:  http.StatusUnauthorized,
+            expectedSession: nil,
+        },
+        {
+            name:            "【失败】Bearerのみでトークンが空 (Serviceは呼ばれない)",
+            authHeader:      "Bearer ",
+            setupMock:       func(m *mockSessionService) {},
+            expectedStatus:  http.StatusUnauthorized,
+            expectedSession: nil,
+        },
+        {
+            name:            "【失败】スキームがBasic (Serviceは呼ばれない)",
+            authHeader:      "Basic dXNlcjpwYXNz",
+            setupMock:       func(m *mockSessionService) {},
+            expectedStatus:  http.StatusUnauthorized,
+            expectedSession: nil,
+        },
+        {
+            name:       "【失败】トークンが期限切れ (extractは成功するがServiceで失敗)",
+            authHeader: "Bearer expired_token",
+            setupMock: func(m *mockSessionService) {
+                m.On("Validate", mock.Anything, "expired_token").Return(nil, errcode.ErrSessionExpired)
+            },
+            expectedStatus:  http.StatusUnauthorized,
+            expectedSession: nil,
+        },
+        {
+            name:       "【失败】ユーザー不在 (404 Not Foundを返す映射を確認)",
+            authHeader: "Bearer ghost_user_token",
+            setupMock: func(m *mockSessionService) {
+                m.On("Validate", mock.Anything, "ghost_user_token").Return(nil, errcode.ErrUserNotFound)
+            },
+            expectedStatus:  http.StatusNotFound,
+            expectedSession: nil,
+        },
+    }
 
-			w := httptest.NewRecorder()
-			r := gin.New()
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            ms := new(mockSessionService)
+            tt.setupMock(ms)
 
-			r.Use(AuthMiddleware(mSession))
+            w := httptest.NewRecorder()
+            r := gin.New()
 
-			r.GET("/test", func(c *gin.Context) {
-				userID, exists := c.Get(contextkeys.AuthPayloadKey)
-				if exists {
-					c.JSON(http.StatusOK, gin.H{"user_id": userID})
-				} else {
-					c.Status(http.StatusOK)
-				}
-			})
+            r.Use(AuthMiddleware(ms))
 
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			if tt.authHeader != "" {
-				req.Header.Set("Authorization", tt.authHeader)
-			}
-			r.ServeHTTP(w, req)
+            r.GET("/test", func(c *gin.Context) {
+                val, exists := c.Get(contextkeys.AuthPayloadKey)
+                if exists {
+                    auth, ok := val.(*dto.AuthContext)
+                    if ok {
+                        c.JSON(http.StatusOK, auth)
+                        return
+                    }
+                }
+                c.Status(http.StatusOK)
+            })
 
-			assert.Equal(t, tt.expectedStatus, w.Code)
+            req := httptest.NewRequest(http.MethodGet, "/test", nil)
+            if tt.authHeader != "" {
+                req.Header.Set("Authorization", tt.authHeader)
+            }
+            r.ServeHTTP(w, req)
 
-			if tt.expectedStatus == http.StatusOK {
-				var resp map[string]int64
-				json.Unmarshal(w.Body.Bytes(), &resp)
-				assert.Equal(t, tt.expectedUserID, resp["user_id"])
-			}
+            assert.Equal(t, tt.expectedStatus, w.Code)
 
-			mSession.AssertExpectations(t)
-		})
-	}
+            if tt.expectedStatus == http.StatusOK && tt.expectedSession != nil {
+                var resp dto.AuthContext
+                json.Unmarshal(w.Body.Bytes(), &resp)
+                
+                assert.Equal(t, tt.expectedSession.UserID, resp.UserID, "UserIDが正しく変換されていること")
+                assert.Equal(t, tt.expectedSession.ID, resp.SessionID, "SessionIDが正しく変換されていること")
+            }
+
+            ms.AssertExpectations(t)
+        })
+    }
 }
 </file>
 
@@ -2629,14 +3529,14 @@ type mockSessionService struct {
 
 type mockTweetService struct {
 	mock.Mock
-} 
+}
 
-func(m *mockUserService) Register(ctx context.Context, req *dto.SignupRequest) (*models.User, error) {
-	args := m.Called(ctx, req)
+func (m *mockUserService) Register(ctx context.Context, username string, email string, password string) (*models.User, error)  {
+	args := m.Called(ctx, username, email, password)
 	return testutils.SafeGet[models.User](args, 0), args.Error(1)
 }
 
-func(m *mockUserService) Login(ctx context.Context, email, password string) (*models.User, error) {
+func (m *mockUserService) Login(ctx context.Context, email, password string) (*models.User, error) {
 	args := m.Called(ctx, email, password)
 	return testutils.SafeGet[models.User](args, 0), args.Error(1)
 }
@@ -2644,26 +3544,42 @@ func(m *mockUserService) Login(ctx context.Context, email, password string) (*mo
 func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*models.User, error) {
 	args := m.Called(ctx, userID)
 	return testutils.SafeGet[models.User](args, 0), args.Error(1)
-}	
-
-func (m *mockSessionService) Issue(ctx context.Context, userID int64) (*models.IssueResponse, error)  {
-	args := m.Called(ctx, userID)
-	return testutils.SafeGet[models.IssueResponse](args, 0), args.Error(1)
 }
 
-func(m *mockSessionService) Revoke(ctx context.Context, token string) error {
-	args := m.Called(ctx, token)
+func (m *mockSessionService) Issue(ctx context.Context, userID int64) (string, error) {
+	args := m.Called(ctx, userID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockSessionService) Revoke(ctx context.Context, sessionID int64) error {
+	args := m.Called(ctx, sessionID)
 	return args.Error(0)
 }
 
-func (m *mockSessionService)Validate(ctx context.Context, token string) (*models.Session, error) {
+func (m *mockSessionService) Validate(ctx context.Context, token string) (*models.Session, error) {
 	args := m.Called(ctx, token)
 	return testutils.SafeGet[models.Session](args, 0), args.Error(1)
 }
 
-func(m *mockTweetService) PostTweet(ctx context.Context, userID int64, req *dto.CreateTweetRequest) (*models.Tweet, error) {
-	args := m.Called(ctx, userID, req)
+func (m *mockTweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*models.Tweet, error) {
+	args := m.Called(ctx, userID, content, imageURL)
 	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+}
+
+func (m *mockTweetService) FetchTweet(ctx context.Context, tweetID int64) (*models.Tweet, error) {
+	args := m.Called(ctx, tweetID)
+	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+}
+
+
+func (m *mockTweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64)  (*models.Tweet, bool, error) {
+	args := m.Called(ctx,newContent, tweetID, userID)
+	return testutils.SafeGet[models.Tweet](args, 0), args.Bool(1), args.Error(2)
+}
+
+func (m *mockTweetService) RemoveTweet(ctx context.Context, tweetID int64, userID int64) error {
+	args := m.Called(ctx, tweetID, userID)
+	return args.Error(0)
 }
 </file>
 
@@ -2671,12 +3587,14 @@ func(m *mockTweetService) PostTweet(ctx context.Context, userID int64, req *dto.
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"aita/internal/pkg/utils"
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2686,76 +3604,83 @@ func TestCreateTweet(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
-	
+
 	initUser := &models.User{
-		Username: "henry",
-		Email: "text@example.com",
-		PasswordHash:"passwordHash",
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "passwordHash",
 	}
 	createdUser, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
 	t.Run("正常にツイートできること", func(t *testing.T) {
 		tweet := &models.Tweet{
-			UserID: createdUser.ID,
-			Content: "これはテスト用のツイート投稿です",
+			UserID:   createdUser.ID,
+			Content:  "これはテスト用のツイート投稿です",
 			ImageURL: utils.StringPtr("https://example.com/image.jpg"),
 		}
 		createdTweet, err := testTweetStore.CreateTweet(ctx, tweet)
 		require.NoError(t, err, "CreatedTweetはエラーを返すべきではありません")
 		require.NotZero(t, createdTweet.ID, "投稿後、IDが発番されるはずです")
 		require.NotZero(t, createdTweet.CreatedAt, "投稿後、作成日時がセットされるはずです")
-		require.Equal(t, tweet.UserID, createdTweet.UserID)
-		require.Equal(t, tweet.Content, createdTweet.Content)
-		require.Equal(t, tweet.ImageURL, createdTweet.ImageURL)
+		require.NotZero(t, createdTweet.CreatedAt)
+    	require.NotZero(t, createdTweet.UpdatedAt)
+		assert.Equal(t, tweet.UserID, createdTweet.UserID)
+		assert.Equal(t, tweet.Content, createdTweet.Content)
+		assert.Equal(t, tweet.ImageURL, createdTweet.ImageURL)
+		assert.WithinDuration(t, createdTweet.CreatedAt, createdTweet.UpdatedAt, 1*time.Second)
+		assert.Equal(t, time.UTC, createdTweet.CreatedAt.Location())
+		assert.Equal(t, time.UTC, createdTweet.UpdatedAt.Location())
+		assert.WithinDuration(t, time.Now(), createdTweet.CreatedAt, 10*time.Second)
+		assert.Equal(t, false, createdTweet.IsEdited)
 	})
 }
 
 func TestCreateTweetWhileError(t *testing.T) {
-		testContext.CleanupTestDB()
+	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
-	
+
 	initUser := &models.User{
-		Username: "henry",
-		Email: "text@example.com",
-		PasswordHash:"passwordHash",
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "passwordHash",
 	}
 	createdUser, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
-	
+
 	t.Run("存在しないUserIDNの場合は、ErrUserNotFoundを返すこと", func(t *testing.T) {
 		badTweet := &models.Tweet{
-			UserID: 99999,
+			UserID:  99999,
 			Content: "存在しないユーザーのツイート",
 		}
-		createdTweet,err := testTweetStore.CreateTweet(ctx, badTweet)
+		createdTweet, err := testTweetStore.CreateTweet(ctx, badTweet)
 		require.Error(t, err, "ユーザーが存在しない場合、エラーを返すべきです")
 		require.ErrorIs(t, err, errcode.ErrUserNotFound, "エラーはErrUserNotFoundであるべきです")
 		require.Nil(t, createdTweet, "エラー時、生成されたツイートはnilであるべきです")
-	})	
-	
+	})
+
 	t.Run("Contentが制限文字数を超えた場合、ErrValueTooLongを返すこと", func(t *testing.T) {
-        longContent := strings.Repeat("a", 3000) 
-        badTweet := &models.Tweet{
-            UserID:  createdUser.ID,
-            Content: longContent,
-        }
-        _, err := testTweetStore.CreateTweet(ctx, badTweet)
-        
-        require.Error(t, err)
-        require.ErrorIs(t, err, errcode.ErrValueTooLong, "DBの切捨てエラーが正しくマッピングされること")
-    })
-	
+		longContent := strings.Repeat("a", 3000)
+		badTweet := &models.Tweet{
+			UserID:  createdUser.ID,
+			Content: longContent,
+		}
+		_, err := testTweetStore.CreateTweet(ctx, badTweet)
+
+		require.Error(t, err)
+		require.ErrorIs(t, err, errcode.ErrValueTooLong, "DBの切捨てエラーが正しくマッピングされること")
+	})
+
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
 		tempDB, err := testutils.OpenDB(testContext.DSN)
 		require.NoError(t, err)
-		
+
 		tempTweetStore := NewPostgresTweetStore(tempDB)
 		tempDB.Close()
 
 		tweet := &models.Tweet{
-			UserID: createdUser.ID,
-			Content: "これはテスト用のツイート投稿です",
+			UserID:   createdUser.ID,
+			Content:  "これはテスト用のツイート投稿です",
 			ImageURL: utils.StringPtr("https://example.com/image.jpg"),
 		}
 		createdTweet, err := tempTweetStore.CreateTweet(ctx, tweet)
@@ -2765,12 +3690,247 @@ func TestCreateTweetWhileError(t *testing.T) {
 		assert.Nil(t, createdTweet, "エラー時、生成されたツイートはnilであるべきです")
 	})
 }
+
+func TestGetTweetByTweetID(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	initUser := &models.User{
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initTweet := &models.Tweet{
+		UserID:   createdUser.ID,
+		Content:  "これはテスト用のツイート投稿です",
+		ImageURL: utils.StringPtr("https://example.com/image.jpg"),
+	}
+
+	createdTweet, err := testTweetStore.CreateTweet(ctx, initTweet)
+	require.NoError(t, err)
+
+	t.Run("正常系:ツイートをTweetIDで取得に成功したこと", func(t *testing.T) {
+		foundTweet, err := testTweetStore.GetTweetByTweetID(ctx, createdTweet.ID)
+		require.NoError(t, err)
+		require.NotNil(t, foundTweet)
+		assert.Equal(t, createdTweet.UserID, foundTweet.UserID)
+		assert.Equal(t, createdTweet.Content, foundTweet.Content)
+		assert.Equal(t, createdTweet.ImageURL, foundTweet.ImageURL)
+		assert.Equal(t, createdTweet.CreatedAt, foundTweet.CreatedAt)
+		assert.Equal(t, createdTweet.UpdatedAt, foundTweet.UpdatedAt)
+		assert.Equal(t, time.UTC, createdTweet.CreatedAt.Location())
+		assert.Equal(t, time.UTC, createdTweet.UpdatedAt.Location())
+		assert.Equal(t, createdTweet.IsEdited, foundTweet.IsEdited)
+	})
+}
+
+func TestGetTweetByTweetIDWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	initUser := &models.User{
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initTweet := &models.Tweet{
+		UserID:   createdUser.ID,
+		Content:  "これはテスト用のツイート投稿です",
+		ImageURL: utils.StringPtr("https://example.com/image.jpg"),
+	}
+
+	createdTweet, err := testTweetStore.CreateTweet(ctx, initTweet)
+	require.NoError(t, err)
+
+	t.Run("異常系:TweetIDがないこと", func(t *testing.T) {
+		foundTweet, err := testTweetStore.GetTweetByTweetID(ctx, int64(999))
+		assert.ErrorIs(t, err, errcode.ErrTweetNotFound)
+		assert.Nil(t, foundTweet)
+	})
+
+	t.Run("異常系:データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+		tempTweetStore := NewPostgresTweetStore(tempDB)
+		tempDB.Close()
+		foundTweet, err := tempTweetStore.GetTweetByTweetID(ctx, createdTweet.ID)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ツイートの取得に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, foundTweet)
+	})
+}
+
+func TestUpdateContent(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	initUser := &models.User{
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initTweet := &models.Tweet{
+		UserID:   createdUser.ID,
+		Content:  "これはテスト用のツイート投稿です",
+		ImageURL: utils.StringPtr("https://example.com/image.jpg"),
+	}
+
+	createdTweet, err := testTweetStore.CreateTweet(ctx, initTweet)
+	require.NoError(t, err)
+
+	t.Run("正常系:ツイートの更新に成功したこと", func(t *testing.T) {
+		newContent := "Contentが更新しました"
+		updatedTweet, err := testTweetStore.UpdateContent(ctx, newContent, createdTweet.ID)
+		require.NoError(t, err)
+		require.NotNil(t, updatedTweet)
+		assert.Equal(t, createdTweet.ID, updatedTweet.ID)
+		assert.Equal(t, createdTweet.UserID, updatedTweet.UserID)
+		assert.Equal(t, createdTweet.CreatedAt, updatedTweet.CreatedAt)
+		assert.Equal(t, newContent, updatedTweet.Content)
+		assert.WithinDuration(t, time.Now(), updatedTweet.UpdatedAt, 2*time.Second)
+		assert.Equal(t, true, updatedTweet.IsEdited)
+	})
+}
+
+func TestUpdateContentWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	initUser := &models.User{
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initTweet := &models.Tweet{
+		UserID:   createdUser.ID,
+		Content:  "これはテスト用のツイート投稿です",
+		ImageURL: utils.StringPtr("https://example.com/image.jpg"),
+	}
+
+	createdTweet, err := testTweetStore.CreateTweet(ctx, initTweet)
+	require.NoError(t, err)
+
+	t.Run("異常系:contentが長すぎ", func(t *testing.T) {
+		newContent := strings.Repeat("a", 1001)
+		updatedTweet, err := testTweetStore.UpdateContent(ctx, newContent, createdTweet.ID)
+		assert.ErrorIs(t, err, errcode.ErrValueTooLong)
+		assert.Nil(t, updatedTweet)
+	})
+
+	t.Run("異常系:TweetIDがないこと", func(t *testing.T) {
+		newContent := "Contentが更新しました"
+		updatedTweet, err := testTweetStore.UpdateContent(ctx, newContent, int64(999))
+		assert.ErrorIs(t, err, errcode.ErrTweetNotFound)
+		assert.Nil(t, updatedTweet)
+	})
+
+	t.Run("異常系:データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+		tempTweetStore := NewPostgresTweetStore(tempDB)
+		tempDB.Close()
+
+		newContent := "Contentが更新しました"
+		updatedTweet, err := tempTweetStore.UpdateContent(ctx, newContent, createdTweet.ID)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ツイートの更新に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+		assert.Nil(t, updatedTweet)
+	})
+
+}
+
+func TestDeleteTweet(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	initUser := &models.User{
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initTweet := &models.Tweet{
+		UserID:   createdUser.ID,
+		Content:  "これはテスト用のツイート投稿です",
+		ImageURL: utils.StringPtr("https://example.com/image.jpg"),
+	}
+	createdTweet, err := testTweetStore.CreateTweet(ctx, initTweet)
+
+	t.Run("正常系: ツイートの削除に成功したこと", func(t *testing.T) {
+		err = testTweetStore.DeleteTweet(ctx, createdTweet.ID)
+		require.NoError(t, err)
+		res, err := testTweetStore.GetTweetByTweetID(ctx, createdTweet.ID)
+		require.Error(t, err)
+		require.Nil(t, res)
+	})
+}
+
+func TestDeleteTweetWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+
+	initUser := &models.User{
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	initTweet := &models.Tweet{
+		UserID:   createdUser.ID,
+		Content:  "これはテスト用のツイート投稿です",
+		ImageURL: utils.StringPtr("https://example.com/image.jpg"),
+	}
+	createdTweet, err := testTweetStore.CreateTweet(ctx, initTweet)
+
+	t.Run("異常系: TweetIDがないこと", func(t *testing.T) {
+		err = testTweetStore.DeleteTweet(ctx, int64(999))
+		assert.ErrorIs(t, err, errcode.ErrTweetNotFound)
+	})
+
+	t.Run("異常系:データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
+		temp, err := testutils.OpenDB(testContext.DSN)
+		require.NoError(t, err)
+		tempTweetStore := NewPostgresTweetStore(temp)
+		temp.Close()
+
+		err = tempTweetStore.DeleteTweet(ctx, createdTweet.ID)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "ツイートの削除に失敗しました")
+		t.Logf("エラーは: %v\n", err)
+	})
+
+}
 </file>
 
 <file path="internal/db/user_store_test.go">
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"context"
@@ -2787,9 +3947,9 @@ func TestCreate(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "henry",
-		Email: "text@example.com",
-		PasswordHash:"hashedpassword",
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "hashedpassword",
 	}
 
 	createdUser, err := testUserStore.Create(ctx, initUser)
@@ -2808,29 +3968,29 @@ func TestCreateWhileConflict(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "henry",
-		Email: "text@example.com",
-		PasswordHash:"hashedpassword",
+		Username:     "henry",
+		Email:        "text@example.com",
+		PasswordHash: "hashedpassword",
 	}
 	_, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
 
 	t.Run("23505: ユーザー名の競合", func(t *testing.T) {
 		newUser := &models.User{
-			Username: "henry",
-			Email: "other@example.com",
+			Username:     "henry",
+			Email:        "other@example.com",
 			PasswordHash: "secretpassword",
 		}
 		createdUser, err := testUserStore.Create(ctx, newUser)
 
 		assert.ErrorIs(t, err, errcode.ErrUsernameConflict, "エラーはErrUsernameConflictであるべきです")
 		assert.Nil(t, createdUser, "エラー時、生成されたユーザーはnilであるべきです")
-	})	
+	})
 
 	t.Run("23505: メールアドレスの競合", func(t *testing.T) {
 		newUser := &models.User{
-			Username: "Test_name",
-			Email: "text@example.com",
+			Username:     "Test_name",
+			Email:        "text@example.com",
 			PasswordHash: "secretpassword",
 		}
 		createdUser, err := testUserStore.Create(ctx, newUser)
@@ -2845,14 +4005,14 @@ func TestCreateWhileAnotherErr(t *testing.T) {
 	ctx := context.Background()
 	t.Run("22001: 文字列長超過", func(t *testing.T) {
 		newUser := &models.User{
-			Username: strings.Repeat("u", 51),
-			Email: "long@example.com",
-			PasswordHash : "sercretpassword",
+			Username:     strings.Repeat("u", 51),
+			Email:        "long@example.com",
+			PasswordHash: "sercretpassword",
 		}
 		createdUser, err := testUserStore.Create(ctx, newUser)
 		assert.ErrorIs(t, err, errcode.ErrValueTooLong)
 		assert.Nil(t, createdUser)
-		
+
 	})
 
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
@@ -2863,9 +4023,9 @@ func TestCreateWhileAnotherErr(t *testing.T) {
 		tempDB.Close()
 
 		newUser := &models.User{
-			Username: "henry",
-			Email: "text@example.com",
-			PasswordHash:"hashedpassword",
+			Username:     "henry",
+			Email:        "text@example.com",
+			PasswordHash: "hashedpassword",
 		}
 		createdUser, err := tempUserStore.Create(ctx, newUser)
 		require.Error(t, err, "内部エラーの場合、エラーを返すべきです")
@@ -2880,9 +4040,9 @@ func TestGetByEmail(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "henry",
-		Email: "get@example.com",
-		PasswordHash:"hashedpassword",
+		Username:     "henry",
+		Email:        "get@example.com",
+		PasswordHash: "hashedpassword",
 	}
 	createdUser, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
@@ -2903,9 +4063,9 @@ func TestGetByEmailWhileError(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "henry",
-		Email: "get@example.com",
-		PasswordHash:"hashedpassword",
+		Username:     "henry",
+		Email:        "get@example.com",
+		PasswordHash: "hashedpassword",
 	}
 	_, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
@@ -2925,7 +4085,7 @@ func TestGetByEmailWhileError(t *testing.T) {
 
 		unfoundUser, err := tempUserStore.GetByEmail(ctx, "get@example.com")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(),"emailによるユーザー取得に失敗しました")
+		assert.Contains(t, err.Error(), "emailによるユーザー取得に失敗しました")
 		t.Logf("エラーは: %v\n", err)
 		assert.Nil(t, unfoundUser)
 	})
@@ -2936,8 +4096,8 @@ func TestGetByID(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "testuser_for_id",
-		Email:    "getid@example.com",
+		Username:     "testuser_for_id",
+		Email:        "getid@example.com",
 		PasswordHash: "passwordHash",
 	}
 	createdUser, err := testUserStore.Create(ctx, initUser)
@@ -2958,8 +4118,8 @@ func TestGetByIDWhlieError(t *testing.T) {
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
 	initUser := &models.User{
-		Username: "testuser_for_id",
-		Email:    "getid@example.com",
+		Username:     "testuser_for_id",
+		Email:        "getid@example.com",
 		PasswordHash: "passwordHash",
 	}
 	_, err := testUserStore.Create(ctx, initUser)
@@ -2973,11 +4133,11 @@ func TestGetByIDWhlieError(t *testing.T) {
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
 		tempDB, err := testutils.OpenDB(testContext.DSN)
 		require.NoError(t, err)
-		
+
 		tempUserStore := NewPostgresUserStore(tempDB)
 		tempDB.Close()
 
-		unfoundUser, err := tempUserStore.GetByID(ctx,1)
+		unfoundUser, err := tempUserStore.GetByID(ctx, 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "IDによるユーザー取得に失敗しました")
 		t.Logf("エラーは: %v\n", err)
@@ -2993,10 +4153,6 @@ import(
 	"time"
 )
 
-const (
-	MaxSessionLife = 7 * 24 * time.Hour
-	SessionDuration = 24 * time.Hour
-)
 
 type Session struct{
 	ID            int64        `db:"id"`
@@ -3004,11 +4160,6 @@ type Session struct{
 	TokenHash     string       `db:"token_hash"`
 	ExpiresAt     time.Time    `db:"expires_at"`
 	CreatedAt     time.Time    `db:"created_at"`
-}
-
-type IssueResponse struct {
-    Session  *Session
-    Token string
 }
 
 func(s *Session) IsExpired() bool {
@@ -3049,44 +4200,12 @@ import (
 	"time"
 )
 
-type SignupRequest struct{
-	Username      string        `json:"username" binding:"required,min=4,max=50" `
-	Email         string        `json:"email" binding:"required,email"`
-	Password      string        `json:"password" binding:"required,min=8,max=72"`
-}
-
-type LoginRequest struct{
-	Email         string        `json:"email" binding:"required,email"`
-	Password      string        `json:"password" binding:"required,min=8,max=72"`
-}
-
 type User struct{
 	ID            int64        `db:"id"`
 	Username      string       `db:"username"`
 	Email         string       `db:"email"`
 	PasswordHash  string       `db:"password_hash"`
 	CreatedAt     time.Time    `db:"created_at"`
-} 
-
-type UserResponse struct{
-	ID            int64        `json:"id"`
-	Username      string       `json:"username"`
-	Email         string       `json:"email"`
-	CreatedAt     time.Time    `json:"created_at"`
-}
-
-type LoginResponse struct{
-	SessionToken  string       `json:"session_token"`	
-	User          UserResponse `json:"user"`
-}
-
-func NewUserResponse(user *User) UserResponse {
-	return UserResponse{
-		ID:        user.ID,
-		Username:  user.Username,
-		Email:     user.Email,
-		CreatedAt: user.CreatedAt,
-	}
 }
 </file>
 
@@ -3094,10 +4213,12 @@ func NewUserResponse(user *User) UserResponse {
 package testutils
 
 import (
-	"aita/internal/config"
+	"aita/internal/configuration"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -3112,6 +4233,7 @@ type TestContext struct {
 	DSN string
 }
 
+// データベースのオフライン状態を擬似的に再現する
 func OpenDB(dsn string) (*sqlx.DB, error) {
 	db, err := sqlx.Open("postgres", dsn)
 	if err != nil {
@@ -3130,13 +4252,27 @@ func  (ctx *TestContext) CleanupTestDB() {
 }
 func RunTestMain(m *testing.M) (*TestContext, func()) {
 	os.Setenv("APP_ENV", "test")
-	cfg := config.LoadConfig()
+
+	cfg := configuration.LoadConfig()
+
 	db, err := sqlx.Connect("postgres", cfg.DBConnStr)
 	if err != nil {
 		log.Fatalf("テストデータベースに接続できません (%.50s...): %v", cfg.DBConnStr, err)
 	}
-	migrationDir := config.GetPath("migrations")
-	migrationURL := "file://" + filepath.ToSlash(migrationDir)
+
+	migrationDir := configuration.GetPath("migrations")
+	absPath, _ := filepath.Abs(migrationDir)
+	cleanPath :=  filepath.ToSlash(absPath)
+
+	var migrationURL string
+
+	if runtime.GOOS == "windows" {
+		migrationURL = "file://" + strings.TrimPrefix(cleanPath, "/")
+	} else {
+		migrationURL = "file://" + cleanPath
+	}
+	log.Printf("Migration URL: %s", migrationURL)
+
 	mig, err := migrate.New(
         migrationURL, 
         cfg.DBConnStr,
@@ -3218,8 +4354,8 @@ func(m *mockSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt time.Ti
 	return args.Error(0)
 }
 
-func(m *mockSessionStore) DeleteByHash(ctx context.Context, tokenHash string) error {
-	args := m.Called(ctx,tokenHash)
+func(m *mockSessionStore) DeleteBySessionID(ctx context.Context, sessionID int64) error {
+	args := m.Called(ctx,sessionID)
 	return args.Error(0)
 }
 
@@ -3232,6 +4368,21 @@ func (m *mockTweetStore) CreateTweet(ctx context.Context, twt *models.Tweet) (*m
 	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
 }
 
+func(m *mockTweetStore) GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error) {
+	args := m.Called(ctx, tweetID)
+	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+}
+
+func(m *mockTweetStore) UpdateContent(ctx context.Context, newContent string,  tweetID int64) (*models.Tweet, error) {
+	args := m.Called(ctx, newContent, tweetID)
+	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+}
+
+
+func(m *mockTweetStore) DeleteTweet(ctx context.Context, tweetID int64) error {
+	args := m.Called(ctx, tweetID)
+	return args.Error(0)
+}
 
 type mockBcryptHasher struct {
 	mock.Mock
@@ -3275,6 +4426,7 @@ func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*models.U
 package service
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"fmt"
@@ -3282,6 +4434,9 @@ import (
 
 type TweetStore interface {
 	CreateTweet(ctx context.Context, tweet *models.Tweet) (*models.Tweet, error)
+	GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error)
+	UpdateContent(ctx context.Context, newContent string, tweetID int64) (*models.Tweet,error)
+	DeleteTweet(ctx context.Context, tweetID int64) error
 }
 
 type tweetService struct {
@@ -3292,24 +4447,104 @@ func NewTweetService(ts TweetStore) *tweetService {
 	return &tweetService{tweetStore: ts}
 }
 
-func (s *tweetService) PostTweet(ctx context.Context, userID int64, req *dto.CreateTweetRequest) (*models.Tweet, error) {
+func (s *tweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*models.Tweet, error) {
 	if userID <= 0 {
 		return nil, errcode.ErrInvalidUserID
 	}
-	if err := models.IsValidTweetReq(req); err != nil {
-		return nil, err
-	}
+
+	if content == "" {
+        return nil, errcode.ErrRequiredFieldMissing
+    }
+
 	initialTweet := &models.Tweet{
 		UserID:   userID,
-		Content:  req.Content,
-		ImageURL: req.ImageURL,
+		Content:  content,
+		ImageURL: imageURL,
 	}
+	
 	savedTweet, err := s.tweetStore.CreateTweet(ctx, initialTweet)
 	if err != nil {
 		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
 	}
 	return savedTweet, nil
+}
 
+func (s *tweetService) FetchTweet(ctx context.Context, tweetID int64) (*models.Tweet, error) {
+	if tweetID <= 0 {
+		return nil, errcode.ErrInvalidTweetID
+	}
+
+	tweet, err := s.tweetStore.GetTweetByTweetID(ctx, tweetID)
+
+	if err != nil {
+		return nil, fmt.Errorf("ツイート情報の取得に失敗しました: %w", err)
+	}
+
+	return tweet, nil
+}
+
+func (s *tweetService) ToMyTweet(ctx context.Context, tweetID int64, userID int64) (*models.Tweet, error) {
+	if userID <= 0 {
+		return nil, errcode.ErrInvalidUserID
+	}
+
+	tweet, err := s.FetchTweet(ctx, tweetID)
+	if err != nil {
+		return nil, err
+	}
+
+	if tweet.UserID != userID {
+		return nil, errcode.ErrForbidden
+	}
+
+	return tweet, nil
+}
+
+func (s *tweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*models.Tweet, bool, error) {
+	if userID <= 0 {
+		return nil, false, errcode.ErrInvalidUserID
+	}
+
+	if  newContent == "" {
+		return nil, false, errcode.ErrRequiredFieldMissing
+	}
+	tweet, err := s.ToMyTweet(ctx, tweetID, userID)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if tweet.Content == newContent {
+		return tweet, false, nil
+	}
+
+	if !tweet.CanBeUpdated() {
+		return nil, false, errcode.ErrEditTimeExpired
+	}
+
+	tweet, err = s.tweetStore.UpdateContent(ctx, newContent, tweetID)
+
+	if err != nil {
+		return nil, false, fmt.Errorf("ツイート編集に失敗しました: %w", err)
+	}
+
+	return tweet, true, nil
+}
+
+func (s *tweetService) RemoveTweet(ctx context.Context, tweetID int64, userID int64) error {
+	if userID <= 0 {
+		return errcode.ErrInvalidUserID
+	}
+	_, err := s.ToMyTweet(ctx, tweetID, userID)
+	if err != nil {
+		return err
+	}
+
+	err = s.tweetStore.DeleteTweet(ctx, tweetID)
+	if err != nil {
+		return fmt.Errorf("ツイートの削除に失敗しました: %w", err)
+	}
+
+	return nil
 }
 </file>
 
@@ -3402,6 +4637,8 @@ package api
 
 import (
 	"aita/internal/contextkeys"
+	"aita/internal/dto"
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 
@@ -3415,12 +4652,27 @@ type AuthSessionService interface {
 func AuthMiddleware(svc AuthSessionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
-		session, err := svc.Validate(c.Request.Context(), authHeader)
+		token, err := extractBearerToken(authHeader)
 		if err != nil {
 			c.AbortWithStatusJSON(dto.GetStatusCode(err), dto.Fail(err))
 			return
 		}
-		c.Set(contextkeys.AuthPayloadKey, session.UserID)
+		session, err := svc.Validate(c.Request.Context(), token)
+		if err != nil {
+			c.AbortWithStatusJSON(dto.GetStatusCode(err), dto.Fail(err))
+			return
+		}
+
+		if session == nil {
+			err := errcode.ErrSessionNotFound
+			c.AbortWithStatusJSON(dto.GetStatusCode(err), dto.Fail(err))
+			return
+		}
+
+		c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
+			UserID: session.UserID,
+			SessionID: session.ID,
+		})
 		c.Next()
 	}
 }
@@ -3430,55 +4682,132 @@ func AuthMiddleware(svc AuthSessionService) gin.HandlerFunc {
 package api
 
 import (
-    "aita/internal/contextkeys"
-    "aita/internal/models"
-    "context"
-    "net/http"
+	"aita/internal/dto"
+	"aita/internal/models"
+	"context"
+	"net/http"
 
-    "github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin"
 )
 
 type TweetService interface {
-    PostTweet(ctx context.Context, userID int64, req *dto.CreateTweetRequest) (*models.Tweet, error)
+	PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*models.Tweet, error)
+	FetchTweet(ctx context.Context, tweetID int64) (*models.Tweet, error) 
+	EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*models.Tweet, bool, error)
+	RemoveTweet(ctx context.Context, tweetID int64, userID int64) error
 }
 
 type TweetHandler struct {
-    tweetService TweetService
+	tweetService TweetService
 }
 
 func NewTweetHandler(svc TweetService) *TweetHandler {
-    return &TweetHandler{tweetService: svc}
+	return &TweetHandler{tweetService: svc}
 }
 
 func (h *TweetHandler) Create(c *gin.Context) {
-    uidRow, exists := c.Get(contextkeys.AuthPayloadKey)
-    if !exists {
-		err := errcode.ErrSessionNotFound
-        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
-        return
-    }
-    
-    userID, ok := uidRow.(int64)
-    if !ok {
-        err := errcode.ErrSessionNotFound
-        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
-        return
-    }
-
-    var req dto.CreateTweetRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        appErr := dto.FilterBindError(err)
-        c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
-        return
-    }
-
-    tweet, err := h.tweetService.PostTweet(c.Request.Context(), userID, &req)
+	auth, err := GetAuthContext(c)
     if err != nil {
         c.JSON(dto.GetStatusCode(err), dto.Fail(err))
         return
     }
 
-    c.JSON(http.StatusCreated, dto.Success(dto.NewTweetResponse(tweet)))
+	var req dto.CreateTweetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		appErr := dto.FilterBindError(err)
+		c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+		return
+	}
+
+	if err := req.Validate(); err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+
+
+	tweet, err := h.tweetService.PostTweet(
+        c.Request.Context(), 
+        auth.UserID,    
+        req.Content,    
+        req.ImageURL,
+    )
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	c.JSON(http.StatusCreated, dto.Success(dto.NewTweetResponse(tweet)))
+}
+
+func (h *TweetHandler) Get(c *gin.Context) {
+	id, err := GetIDParam(c, "id")
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return 
+	}
+
+	tweet, err := h.tweetService.FetchTweet(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return 
+	}
+	c.JSON(http.StatusOK, dto.Success(dto.NewTweetResponse(tweet)))
+
+}
+func (h *TweetHandler) Update(c *gin.Context) {
+	id, err := GetIDParam(c, "id")
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return 
+	}
+	auth, err := GetAuthContext(c)
+    if err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+	var req dto.UpdateTweetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		appErr := dto.FilterBindError(err)
+		c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+		return
+	}
+
+	if err := req.Validate(); err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+	tweet, isChanged, err := h.tweetService.EditTweet(c.Request.Context(), req.Content, id, auth.UserID)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	if ! isChanged {
+		c.JSON(http.StatusOK, dto.SuccessMsg("内容に変更はありません"))
+        return
+	}
+
+	c.JSON(http.StatusOK, dto.Success(dto.NewTweetResponse(tweet)))
+
+}
+func (h *TweetHandler) Delete(c *gin.Context) {
+	id, err := GetIDParam(c, "id")
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return 
+	}
+	auth, err := GetAuthContext(c)
+    if err != nil {
+        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+        return
+    }
+	err = h.tweetService.RemoveTweet(c.Request.Context(), id, auth.UserID)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return 
+	}
+	
+	c.JSON(http.StatusOK, dto.SuccessMsg("ツイートの削除成功"))
 }
 </file>
 
@@ -3487,6 +4816,8 @@ package api
 
 import (
 	"aita/internal/contextkeys"
+	"aita/internal/dto"
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"bytes"
 	"encoding/json"
@@ -3494,6 +4825,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -3517,27 +4849,39 @@ func TestSignUp(t *testing.T) {
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				user := &models.User{ID: 1, Username: "mock_User"}
-				mu.On("Register", mock.Anything, mock.Anything).Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return(&models.IssueResponse{Token: "valid_token_string"}, nil)
+				user := &models.User{
+					ID: 1,
+					Username: "mock_User",
+					Email: "taro@example.com",
+					PasswordHash: "password123hash",
+					CreatedAt: time.Now().UTC(),
+				}
+				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
+					return username == "mock_user"
+				}), mock.MatchedBy(func(email string) bool{
+					return email == "taro@example.com"
+				}), mock.MatchedBy(func(password string) bool {
+					return password == "password123"
+				})).Return(user, nil)
+				ms.On("Issue", mock.Anything, user.ID).Return("valid_token_string", nil)
 			},
 			expectedStatus: http.StatusCreated,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp dto.Response
-				json.Unmarshal(w.Body.Bytes(), &resp)				
+				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "valid_token_string", data["session_token"])
 			},
 		},
 		{
-			name:        "リクエスト形式不正: 無効なJSONを送信した場合",
-			requestBody: `{"username": "incomplete_json`, 
-			setupMock:   func(mu *mockUserService, ms *mockSessionService) {},
+			name:           "リクエスト形式不正: 無効なJSONを送信した場合",
+			requestBody:    `{"username": "incomplete_json`,
+			setupMock:      func(mu *mockUserService, ms *mockSessionService) {},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
-				
+
 				assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
 				assert.Equal(t, "JSONの構文が正しくありません", resp.Error)
 			},
@@ -3550,36 +4894,48 @@ func TestSignUp(t *testing.T) {
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				mu.On("Register", mock.Anything, mock.Anything).Return(nil, errcode.ErrEmailConflict)
+				mu.On("Register", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, errcode.ErrEmailConflict)
 			},
 			expectedStatus: http.StatusConflict,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
-				
+
 				assert.Equal(t, "EMAIL_CONFLICT", resp.Code)
 				assert.Contains(t, resp.Error, "既に使用されています")
 			},
 		},
 		{
-            name: "セッション発行失敗",
-            requestBody: dto.SignupRequest{
-                Username: "error_user",
-                Email:    "issue_fail@test.com",
-                Password: "password123",
-            },
-            setupMock: func(mu *mockUserService, ms *mockSessionService) {
-                user := &models.User{ID: 50, Username: "error_user"}
-                mu.On("Register", mock.Anything, mock.Anything).Return(user, nil)
-                ms.On("Issue", mock.Anything, int64(50)).Return(nil, errors.New("redis connection failed"))
-            },
-            expectedStatus: http.StatusInternalServerError, 
-            checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-                var resp dto.Response
-                json.Unmarshal(w.Body.Bytes(), &resp)
-                assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
-            },
-        },
+			name: "セッション発行失敗",
+			requestBody: dto.SignupRequest{
+				Username: "error_user",
+				Email:    "issue_fail@test.com",
+				Password: "password123",
+			},
+			setupMock: func(mu *mockUserService, ms *mockSessionService) {
+				user := &models.User{
+					ID: 50, 
+					Username: "error_user",
+					Email:    "issue_fail@test.com",
+					PasswordHash: "password123hashed",
+					CreatedAt: time.Now().UTC(),
+				}
+				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
+					return username == "error_user"
+				}), mock.MatchedBy(func(email string) bool{
+					return email == "issue_fail@test.com"
+				}), mock.MatchedBy(func(password string) bool {
+					return password == "password123"
+				})).Return(user, nil)
+				ms.On("Issue", mock.Anything, int64(50)).Return("", errors.New("redis connection failed"))
+			},
+			expectedStatus: http.StatusInternalServerError,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp dto.Response
+				json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -3627,7 +4983,7 @@ func TestLogin(t *testing.T) {
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &models.User{ID: 1, Email: "test@example.com"}
 				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return(&models.IssueResponse{Token: "login_token_abc"}, nil)
+				ms.On("Issue", mock.Anything, user.ID).Return("login_token_abc", nil)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -3638,9 +4994,9 @@ func TestLogin(t *testing.T) {
 			},
 		},
 		{
-			name: "JSON構文エラー",
-			requestBody: `{"email": "bad-json"...`, 
-			setupMock:   func(mu *mockUserService, ms *mockSessionService) {},
+			name:           "JSON構文エラー",
+			requestBody:    `{"email": "bad-json"...`,
+			setupMock:      func(mu *mockUserService, ms *mockSessionService) {},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp dto.Response
@@ -3657,7 +5013,7 @@ func TestLogin(t *testing.T) {
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				mu.On("Login", mock.Anything, mock.Anything, mock.Anything).Return(nil, errcode.ErrInvalidCredentials)
 			},
-			expectedStatus: http.StatusUnauthorized, 
+			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
@@ -3674,9 +5030,9 @@ func TestLogin(t *testing.T) {
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &models.User{ID: 1, Email: "test@example.com"}
 				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return(nil, errors.New("internal server error"))
+				ms.On("Issue", mock.Anything, user.ID).Return("", errors.New("internal server error"))
 			},
-			expectedStatus: http.StatusInternalServerError, 
+			expectedStatus: http.StatusInternalServerError,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
@@ -3724,11 +5080,11 @@ func TestGetMe(t *testing.T) {
 		{
 			name: "マイページ取得成功",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, int64(100))
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 101, SessionID: 104})
 			},
 			setupMock: func(mu *mockUserService) {
-				user := &models.User{ID: 100, Username: "test_user", Email: "test@example.com"}
-				mu.On("ToMyPage", mock.Anything, int64(100)).Return(user, nil)
+				user := &models.User{ID: 101, Username: "test_user", Email: "test@example.com"}
+				mu.On("ToMyPage", mock.Anything, int64(101)).Return(user, nil)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -3736,12 +5092,12 @@ func TestGetMe(t *testing.T) {
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "test_user", data["username"])
-				assert.Equal(t, float64(100), data["id"]) 
+				assert.EqualValues(t, 101, data["id"])
 			},
 		},
 		{
-			name: "未認証エラー",
-			setupContext: func(c *gin.Context) {},
+			name:           "未認証エラー",
+			setupContext:   func(c *gin.Context) {},
 			setupMock:      func(mu *mockUserService) {},
 			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -3753,12 +5109,12 @@ func TestGetMe(t *testing.T) {
 		{
 			name: "ユーザー不在",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, int64(404))
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 404, SessionID: 104})
 			},
 			setupMock: func(mu *mockUserService) {
 				mu.On("ToMyPage", mock.Anything, int64(404)).Return(nil, errcode.ErrUserNotFound)
 			},
-			expectedStatus: http.StatusNotFound, 
+			expectedStatus: http.StatusNotFound,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp dto.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
@@ -3770,7 +5126,7 @@ func TestGetMe(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mu := new(mockUserService)
-			h := NewUserHandler(mu, nil) 
+			h := NewUserHandler(mu, nil)
 			tt.setupMock(mu)
 
 			w := httptest.NewRecorder()
@@ -3789,66 +5145,75 @@ func TestGetMe(t *testing.T) {
 	}
 }
 
-func TestUserHandler_Logout(t *testing.T) {
-    mockSvc := new(mockSessionService) 
-    handler := NewUserHandler(nil, mockSvc)
+func TestUserHandlerLogout(t *testing.T) {
 
     gin.SetMode(gin.TestMode)
 
-    validHeader := "Bearer valid_token_string_32_chars_long"
+    const testSessionID int64 = 999
 
     tests := []struct {
         name           string
-        authHeader     string
-        setupMock      func()
+        setupContext   func(c *gin.Context)
+        setupMock      func(ms *mockSessionService)
         expectedStatus int
         expectMsg      string
     }{
         {
-            name:       "ログアウト成功",
-            authHeader: validHeader,
-            setupMock: func() {
-                mockSvc.On("Revoke", mock.Anything, validHeader).Return(nil)
+            name: "ログアウト成功",
+            setupContext: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
+                    SessionID: testSessionID,
+                })
+            },
+            setupMock: func(ms *mockSessionService) {
+                ms.On("Revoke", mock.Anything, testSessionID).Return(nil)
             },
             expectedStatus: http.StatusOK,
             expectMsg:      "ログアウトしました",
         },
         {
-            name:       "セッションが見つからない（不正なトークン形式など）",
-            authHeader: "InvalidHeader",
-            setupMock: func() {
-                mockSvc.On("Revoke", mock.Anything, "InvalidHeader").Return(errcode.ErrSessionNotFound)
-            },
-            expectedStatus: http.StatusUnauthorized, 
+            name: "セッションが見たからない",
+            setupContext: func(c *gin.Context) {},
+            setupMock:      func(ms *mockSessionService) {},
+            expectedStatus: http.StatusUnauthorized,
         },
         {
-            name:       "サーバー内部エラー",
-            authHeader: validHeader,
-            setupMock: func() {
-                mockSvc.On("Revoke", mock.Anything, validHeader).Return(errors.New("db error"))
+            name: "サーバー内部エラー",
+            setupContext: func(c *gin.Context) {
+                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
+                    SessionID: testSessionID,
+                })
             },
-            expectedStatus: http.StatusInternalServerError,
+            setupMock: func(ms *mockSessionService) {
+                ms.On("Revoke", mock.Anything, testSessionID).Return(errcode.ErrSessionNotFound)
+            },
+            expectedStatus: http.StatusUnauthorized,
         },
     }
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            mockSvc.ExpectedCalls = nil
-
-            tt.setupMock()
+            
+			ms := new(mockSessionService)
+			h := NewUserHandler(nil, ms)
+			
+			tt.setupMock(ms)
 
             w := httptest.NewRecorder()
             c, _ := gin.CreateTestContext(w)
-            
+
             c.Request, _ = http.NewRequest(http.MethodPost, "/logout", nil)
-            c.Request.Header.Set("Authorization", tt.authHeader)
-            handler.Logout(c)
+        
+            tt.setupContext(c)
+
+            h.Logout(c)
 
             assert.Equal(t, tt.expectedStatus, w.Code)
             if tt.expectMsg != "" {
                 assert.Contains(t, w.Body.String(), tt.expectMsg)
             }
-            mockSvc.AssertExpectations(t)
+
+            ms.AssertExpectations(t)
         })
     }
 }
@@ -3890,6 +5255,7 @@ func TestMain(m *testing.M) {
 package db
 
 import (
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"database/sql"
@@ -4032,7 +5398,7 @@ package tests
 
 import (
 	"aita/internal/api"
-	"aita/internal/models"
+	"aita/internal/dto"
 	"aita/internal/service"
 	"bytes"
 	"encoding/json"
@@ -4048,18 +5414,17 @@ import (
 
 func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
-	userService  := service.NewUserService(testUserStore, testHasher)
+	userService := service.NewUserService(testUserStore, testHasher)
 	sessionService := service.NewSessionService(testSessionStore, userService, testTokemanager)
 	tweetService := service.NewTweetService(testTweetStore)
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
 
-
 	gin.SetMode(gin.TestMode)
-	r := api.SetupRouter(userHandler, tweetHandler,sessionService)
+	r := api.SetupRouter(userHandler, tweetHandler, sessionService)
 	signupPayload := dto.SignupRequest{
 		Username: "frontend_dev",
-		Email: "dev@aita.com",
+		Email:    "dev@aita.com",
 		Password: "password123",
 	}
 	jsonSignup, _ := json.Marshal(signupPayload)
@@ -4071,7 +5436,7 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "frontend_dev")
 
 	loginPayload := dto.LoginRequest{
-		Email: "dev@aita.com",
+		Email:    "dev@aita.com",
 		Password: "password123",
 	}
 	jsonLogin, _ := json.Marshal(loginPayload)
@@ -4081,9 +5446,9 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var loginResp struct {
-    	Data struct {
-       		Token string `json:"session_token"`
-    	} `json:"data"`
+		Data struct {
+			Token string `json:"session_token"`
+		} `json:"data"`
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &loginResp)
 	require.NoError(t, err)
@@ -4092,12 +5457,12 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest(http.MethodGet, "/api/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer " + token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	fmt.Println("Body:", w.Body.String())
 	assert.Contains(t, w.Body.String(), "frontend_dev")
-	
+
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest(http.MethodGet, "/api/v1/me", nil)
 	r.ServeHTTP(w, req)
@@ -4116,12 +5481,17 @@ func SetupRouter(
 	userHandler *UserHandler, 
 	tweetHandler *TweetHandler, 
 	sessionService AuthSessionService ,
-	) *gin.Engine {
+) *gin.Engine {
 	router := gin.Default()
+	router.GET("/health", func(c *gin.Context) {
+        c.JSON(200, gin.H{"status": "ok"})
+    })
+	
 	v1 := router.Group("/api/v1")
 	{
 		v1.POST("/signup", userHandler.SignUp)
 		v1.POST("/login", userHandler.Login)
+		v1.GET("/tweets/:id", tweetHandler.Get)
 		protected := v1.Group("/")
 		protected.Use(AuthMiddleware(sessionService))
 		{
@@ -4130,6 +5500,8 @@ func SetupRouter(
 			tweets := protected.Group("/tweets")
 			{
 				tweets.POST("", tweetHandler.Create)
+				tweets.PATCH("/:id", tweetHandler.Update)  
+                tweets.DELETE("/:id", tweetHandler.Delete)
 			}
 		} 
 	}
@@ -4141,7 +5513,7 @@ func SetupRouter(
 package api
 
 import (
-	"aita/internal/contextkeys"
+	"aita/internal/dto"
 	"aita/internal/models"
 	"context"
 
@@ -4151,22 +5523,22 @@ import (
 )
 
 type UserService interface {
-	Register(ctx context.Context, req *dto.SignupRequest) (*models.User, error)
-	Login(ctx context.Context, email, password string) (*models.User, error) 
-	ToMyPage(ctx context.Context, id int64) (*models.User, error)             
+	Register(ctx context.Context, username string, email string, password string) (*models.User, error) 
+	Login(ctx context.Context, email, password string) (*models.User, error)
+	ToMyPage(ctx context.Context, id int64) (*models.User, error)
 }
 
-type SessionManageer interface {
-    Issue(ctx context.Context, userID int64) (*models.IssueResponse, error)
-    Revoke(ctx context.Context, token string) error 
+type SessionManager interface {
+	Issue(ctx context.Context, userID int64) (string, error)
+	Revoke(ctx context.Context, sessionID int64) error 
 }
 
 type UserHandler struct {
 	userService    UserService
-	sessionService SessionManageer
+	sessionService SessionManager
 }
 
-func NewUserHandler(usvc UserService, sm SessionManageer) *UserHandler {
+func NewUserHandler(usvc UserService, sm SessionManager) *UserHandler {
 	return &UserHandler{
 		userService:    usvc,
 		sessionService: sm,
@@ -4174,79 +5546,91 @@ func NewUserHandler(usvc UserService, sm SessionManageer) *UserHandler {
 }
 
 func (h *UserHandler) respondWithToken(c *gin.Context, user *models.User, statusCode int) {
-	issueResponse, err := h.sessionService.Issue(c.Request.Context(), user.ID)
+	token, err := h.sessionService.Issue(c.Request.Context(), user.ID)
 	if err != nil {
 		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
 		return
 	}
 
-	loginData := models.LoginResponse{
-        SessionToken: issueResponse.Token,
-        User:         dto.NewUserResponse(user),
-    }
-    c.JSON(statusCode, dto.Success(loginData))
+	loginData := dto.LoginResponse{
+		SessionToken: token,
+		User:         dto.NewUserResponse(user),
+	}
+	c.JSON(statusCode, dto.Success(loginData))
 }
 
 func (h *UserHandler) SignUp(c *gin.Context) {
-     var req dto.SignupRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        appErr := dto.FilterBindError(err)
-        c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
-        return
-    }
+	var req dto.SignupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		appErr := dto.FilterBindError(err)
+		c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+		return
+	}
 
-    user, err := h.userService.Register(c.Request.Context(), &req)
-    if err != nil {
-        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
-        return
-    }
-    
-    h.respondWithToken(c, user, http.StatusCreated)
+	if err := req.Validate(); err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	user, err := h.userService.Register(c.Request.Context(), req.Username, req.Email, req.Password)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	h.respondWithToken(c, user, http.StatusCreated)
 }
 
 func (h *UserHandler) Login(c *gin.Context) {
-    var req dto.LoginRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        appErr := dto.FilterBindError(err)
-        c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
-        return  
-    }
+	var req dto.LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		appErr := dto.FilterBindError(err)
+		c.JSON(dto.GetStatusCode(appErr), dto.Fail(appErr))
+		return
+	}
 
-    user, err := h.userService.Login(c.Request.Context(), req.Email, req.Password)
-    if err != nil {
-        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
-        return
-    }
+	if err := req.Validate(); err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
 
-    h.respondWithToken(c, user, http.StatusOK)
+	user, err := h.userService.Login(c.Request.Context(), req.Email, req.Password)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+
+	h.respondWithToken(c, user, http.StatusOK)
 }
 
 func (h *UserHandler) GetMe(c *gin.Context) {
-    val, exists := c.Get(contextkeys.AuthPayloadKey)
-    userID, ok := val.(int64)
-    if !exists || !ok {
-        err := errcode.ErrSessionNotFound
-        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
-        return
-    }
+	auth, err := GetAuthContext(c)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
 
-    user, err := h.userService.ToMyPage(c.Request.Context(), userID)
-    if err != nil {
-        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
-        return
-    }
+	user, err := h.userService.ToMyPage(c.Request.Context(), auth.UserID)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
 
-    c.JSON(http.StatusOK, dto.Success(dto.NewUserResponse(user)))
+	c.JSON(http.StatusOK, dto.Success(dto.NewUserResponse(user)))
 }
 
 func (h *UserHandler) Logout(c *gin.Context) {
-    authHeader := c.GetHeader("Authorization")
+	auth, err := GetAuthContext(c)
+	if err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
+	if err := h.sessionService.Revoke(c.Request.Context(), auth.SessionID); err != nil {
+		c.JSON(dto.GetStatusCode(err), dto.Fail(err))
+		return
+	}
 
-    if err := h.sessionService.Revoke(c.Request.Context(), authHeader); err != nil {
-        c.JSON(dto.GetStatusCode(err), dto.Fail(err))
-    }
-
-    c.JSON(http.StatusOK, dto.SuccessMsg("ログアウトしました"))
+	c.JSON(http.StatusOK, dto.SuccessMsg("ログアウトしました"))
 }
 </file>
 
@@ -4306,14 +5690,16 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 │   └── api/           #　メインプログラム (main.go)
 ├── internal/
 │   ├── api/           #　HTTPハンドラー, ルーティング, ミドルウェア
-│   ├── config         #　設定情報の読み込み (env, yaml)
-│   ├── contextkeys    #　
+│   ├── configuaration #　設定情報の読み込み (env, yaml)
+│   ├── contextkeys    #　コンテキストキー定義
 │   ├── db/            #　ストレージ実装 (Postgres/Redis/ES)
+│   ├── dto/           #  Data Transfer Object。リクエスト/レスポンスの構造体と変換処理。業務エラーコードとHTTPステータスのマッピング。
+│   ├── errcode/       #  エラー定義。
 │   ├── models/        #　データモデル定義
 │   ├── pkg/
-│   │    ├── crypto    #
+│   │    ├── crypto    #　暗号化関連。パスワードのハッシュ化やsha256でtokenの生成・検証
 │   │    ├── testutils #　ユニットテストの補助関数（ヘルパー）
-│   │    └── utils     #
+│   │    └── utils     #  汎用関数
 │   └── service        #  テートデータベース作成
 ├── scripts
 │   └── init-db        #  DB環境構築用スクリプト（Docker起動など）
@@ -4329,7 +5715,7 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 
 [x] DB層のトークン機能とユーザー機能のユニットテスト
 
-[ ] ツイート投稿機能の実装。
+[x] ツイート投稿機能の実装。
 
 [ ] Redisによるタイムライン（Feed）のキャッシュ最適化。
 
@@ -4343,7 +5729,7 @@ package main
 
 import (
 	"aita/internal/api"
-	"aita/internal/config"
+	"aita/internal/configuration"
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
 	"aita/internal/service"
@@ -4356,7 +5742,7 @@ import (
 
 
 func main() {
-	config := config.LoadConfig()
+	config := configuration.LoadConfig()
 	database, err:= sqlx.Connect("postgres",config.DBConnStr)
 	if err!= nil {
 		log.Fatal("データベースに接続できません",err)
@@ -4398,29 +5784,22 @@ type Tweet struct{
 	Content       string       `db:"content"`
 	ImageURL     *string       `db:"image_url"`
 	CreatedAt     time.Time    `db:"created_at"` 
+	UpdatedAt     time.Time    `db:"updated_at"`
+	IsEdited      bool         `db:"is_edited"`
 }
 
-type CreateTweetRequest struct {
-	Content		 string        `json:"content" binding:"max=1000"`
-	ImageURL    *string        `json:"image_url" binding:"omitempty,url"`
-}
 
-type TweetResponse struct{
-	ID            int64        `json:"id"`
-	UserID        int64		   `json:"user_id"`
-	Content       string       `json:"content"`
-	ImageURL     *string       `json:"image_url"`
-	CreatedAt     time.Time    `json:"created_at"` 
-}
 
-func NewTweetResponse(tweet *Tweet) TweetResponse {
-	return TweetResponse{
-		ID: 		tweet.ID,
-		UserID:     tweet.UserID,
-		Content:    tweet.Content,
-		ImageURL:   tweet.ImageURL,
-		CreatedAt:  tweet.CreatedAt,
+
+
+func(t *Tweet) CanBeUpdated() bool {
+	if t == nil {
+		return false
 	}
+
+	duration := time.Now().UTC().Sub(t.CreatedAt.UTC())
+	
+	return duration <= editWindow
 }
 </file>
 

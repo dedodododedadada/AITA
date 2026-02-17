@@ -13,4 +13,6 @@ vendor/
 .DS_Store       
 Thumbs.db       
 go
-go.sum.bak      
+go.sum.bak  
+   
+repomix-output.xml 

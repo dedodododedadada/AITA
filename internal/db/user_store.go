@@ -16,8 +16,8 @@ type postgresUserStore struct {
 	database *sqlx.DB
 }
 
-func NewPostgresUserStore(DB *sqlx.DB) *postgresUserStore {
-	return &postgresUserStore{database: DB}
+func NewPostgresUserStore(db *sqlx.DB) *postgresUserStore {
+	return &postgresUserStore{database: db}
 }
 
 func (s *postgresUserStore) Create(ctx context.Context, user *models.User) (*models.User, error) {

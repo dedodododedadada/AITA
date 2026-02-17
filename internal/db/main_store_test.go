@@ -12,6 +12,7 @@ var (
     testUserStore    *postgresUserStore
     testSessionStore *postgresSessionStore
     testTweetStore   *postgresTweetStore
+	testFollowStore  *postgresFollowStore
     testContext      *testutils.TestContext 
 )
 
@@ -22,6 +23,7 @@ func TestMain(m *testing.M) {
 	testUserStore = NewPostgresUserStore(testContext.TestDB)
 	testSessionStore = NewPostgresSessionStore(testContext.TestDB)
 	testTweetStore = NewPostgresTweetStore(testContext.TestDB)
+	testFollowStore = NewPostgresFollowStore(testContext.TestDB)
 	testContext.CleanupTestDB()
 	exitCode := m.Run()
 	teardown()
