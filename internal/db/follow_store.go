@@ -60,7 +60,7 @@ func (s *postgresFollowStore)Create(ctx context.Context, follow *models.Follow) 
 }
 
 
-func (s *postgresFollowStore) GetFollowing(ctx context.Context, followerID int64) ([]*models.Follow, error) {
+func (s *postgresFollowStore) GetFollowings(ctx context.Context, followerID int64) ([]*models.Follow, error) {
 	followings := []*models.Follow{}
 	query := `SELECT id, follower_id, following_id, created_at FROM follows WHERE follower_id = $1`
 	err := s.database.SelectContext(ctx, &followings, query, followerID)
@@ -70,7 +70,7 @@ func (s *postgresFollowStore) GetFollowing(ctx context.Context, followerID int64
 	return followings, nil
 }
 
-func (s *postgresFollowStore) GetFollower(ctx context.Context, followingID int64) ([]*models.Follow, error) {
+func (s *postgresFollowStore) GetFollowers(ctx context.Context, followingID int64) ([]*models.Follow, error) {
 	followers := []*models.Follow{}
 	query := `SELECT id, follower_id, following_id, created_at FROM follows WHERE following_id = $1`
 	err := s.database.SelectContext(ctx, &followers, query, followingID)

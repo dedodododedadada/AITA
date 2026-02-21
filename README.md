@@ -50,24 +50,26 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 
 .
 ├── cmd
-│   └── api/           #　メインプログラム (main.go)
+│   └── api/                #　メインプログラム (main.go)
 ├── internal/
-│   ├── api/           #　HTTPハンドラー, ルーティング, ミドルウェア
-│   ├── configuaration #　設定情報の読み込み (env, yaml)
-│   ├── contextkeys    #　コンテキストキー定義
-│   ├── db/            #　ストレージ実装 (Postgres/Redis/ES)
-│   ├── dto/           #  Data Transfer Object。リクエスト/レスポンスの構造体と変換処理。業務エラーコードとHTTPステータスのマッピング。
-│   ├── errcode/       #  エラー定義。
-│   ├── models/        #　データモデル定義
+│   ├── api/                #　HTTPハンドラー, ルーティング, ミドルウェア
+│   ├── cache/              #  Redisを用いた高速データアクセス層。Pipelineによるバッチ処理、Jitterによるキャッシュ雪崩対策の実装
+│   ├── configuaration/     #　設定情報の読み込み (env, yaml)
+│   ├── contextkeys/        #　コンテキストキー定義
+│   ├── db/                 #　ストレージ実装 (Postgres/Redis/ES)
+│   ├── dto/                #  Data Transfer Object。リクエスト/レスポンスの構造体と変換処理。業務エラーコードとHTTPステータスのマッピング。
+│   ├── errcode/            #  エラー定義。
+│   ├── models/             #　データモデル定義
 │   ├── pkg/
-│   │    ├── crypto    #　暗号化関連。パスワードのハッシュ化やsha256でtokenの生成・検証
-│   │    ├── testutils #　ユニットテストの補助関数（ヘルパー）
-│   │    └── utils     #  汎用関数
-│   └── service        #  テートデータベース作成
+│   │    ├── crypto         #　暗号化関連。パスワードのハッシュ化やsha256でtokenの生成・検証
+│   │    ├── testutils      #　ユニットテストの補助関数（ヘルパー）
+│   │    └── utils          #  汎用関数
+│   ├── repository          #  データアクセスの抽象化と調整。DB(Postgres)とキャッシュ(Redis)を跨ぐデータ整合性の管理、Cache-Asideパターンの実装。
+│   └── service             #  テートデータベース作成
 ├── scripts
-│   └── init-db        #  DB環境構築用スクリプト（Docker起動など）
-├── migrations/        #　SQLマイグレーションファイル
-└── tests/             #　結合テスト (＊作成中＊)
+│   └── init-db             #  DB環境構築用スクリプト（Docker起動など）
+├── migrations/             #　SQLマイグレーションファイル
+└── tests/                  #　結合テスト (＊作成中＊)
 
 
 今後のロードマップ

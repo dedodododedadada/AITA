@@ -118,7 +118,7 @@ func TestCreateFollowWhileErr(t *testing.T) {
 	})
 }
 
-func TestGetFollowing(t *testing.T) {
+func TestGetFollowings(t *testing.T) {
 	testContext.CleanupTestDB()
 	ctx := context.Background()
 	userA, userB := setupUser(t, ctx)
@@ -147,7 +147,7 @@ func TestGetFollowing(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("正常系：フォロー中リストの取得に成功", func(t *testing.T) {
-		res, err := testFollowStore.GetFollowing(ctx, userA.ID)
+		res, err := testFollowStore.GetFollowings(ctx, userA.ID)
 		require.NoError(t, err)
 		assert.Len(t, res, 2)
 		targetIDs := []int64{res[0].FollowingID, res[1].FollowingID}
@@ -158,7 +158,7 @@ func TestGetFollowing(t *testing.T) {
 	})
 
 	t.Run("正常系：フォローしているユーザーがいない場合は空のスライスを返すこと", func(t *testing.T) {
-        followings, err := testFollowStore.GetFollowing(ctx, userC.ID)
+        followings, err := testFollowStore.GetFollowings(ctx, userC.ID)
         
         require.NoError(t, err)
     	require.NotNil(t, followings, "nilではなく空のスライスであるべきです")
@@ -171,7 +171,7 @@ func TestGetFollowing(t *testing.T) {
 		tempFollowStore := NewPostgresFollowStore(tempDB)
 		tempDB.Close()
 
-		followings, err := tempFollowStore.GetFollowing(ctx, userC.ID)
+		followings, err := tempFollowStore.GetFollowings(ctx, userC.ID)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "フォロー中リストの取得に失敗しました")
 		t.Logf("エラーは: %v\n", err)
@@ -210,7 +210,7 @@ func TestGetFollowers(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("正常系: ", func(t *testing.T) {
-		followers, err := testFollowStore.GetFollower(ctx, userA.ID)
+		followers, err := testFollowStore.GetFollowers(ctx, userA.ID)
 		require.NoError(t, err)
 		require.NotNil(t, followers)
 		assert.Len(t, followers, 2)
@@ -222,7 +222,7 @@ func TestGetFollowers(t *testing.T) {
 	})
 
 	t.Run("正常系:フォローされているユーザーがいない場合は空のスライスを返すこと", func(t *testing.T) {
-		followers, err := testFollowStore.GetFollower(ctx, userC.ID)
+		followers, err := testFollowStore.GetFollowers(ctx, userC.ID)
         
         require.NoError(t, err)
     	require.NotNil(t, followers, "nilではなく空のスライスであるべきです")
@@ -235,7 +235,7 @@ func TestGetFollowers(t *testing.T) {
         tempFollowStore := NewPostgresFollowStore(tempDB)
         tempDB.Close() 
 
-        followers, err := tempFollowStore.GetFollower(ctx, userA.ID)
+        followers, err := tempFollowStore.GetFollowers(ctx, userA.ID)
         require.Error(t, err)
         assert.Contains(t, err.Error(), "フォロワーリストの取得に失敗しました")
         assert.Nil(t, followers)

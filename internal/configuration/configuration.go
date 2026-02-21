@@ -70,3 +70,5 @@ func LoadConfig() *Config{
 	}
 }
 
+// redisの実装を更新
+
