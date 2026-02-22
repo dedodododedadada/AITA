@@ -27,11 +27,80 @@ func (c *redisFollowCache) followerKey(userID int64) string {
 	return fmt.Sprintf("follow:follower:%d", userID)
 }
 
+func (c *redisFollowCache) Add(ctx context.Context, followerID, followingID int64) error {
+    keyFollowing := c.followingKey(followerID)
+	keyFollower := c.followerKey(followingID)
+	
+	pipe := c.client.Pipeline()
+    
+	pipe.SAdd(ctx, keyFollowing, followingID)
+    pipe.SAdd(ctx, keyFollower, followerID)
+    
+	expiration := utils.GetRandomExpiration(24*time.Hour, 1*time.Hour)
+    pipe.Expire(ctx, keyFollowing , expiration)
+    pipe.Expire(ctx, keyFollower, expiration)
 
+    _, err := pipe.Exec(ctx)
+    return err
+}
 
-func (c *redisFollowCache) IsFollowing(ctx context.Context, followerID, followingID int64) (bool, error) {
-    key := c.followingKey(followerID)
-    return c.client.SIsMember(ctx, key, followingID).Result()
+func(c *redisFollowCache) AddFollowings(ctx context.Context, followerID int64, followings []int64) error {
+	keyFollowing := c.followingKey(followerID)
+
+	pipe := c.client.Pipeline()
+
+	pipe.SAdd(ctx, keyFollowing, followings)
+	expiration := utils.GetRandomExpiration(24*time.Hour, 1*time.Hour)
+	pipe.Expire(ctx,keyFollowing, expiration)
+
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func(c *redisFollowCache) AddFollowers(ctx context.Context, followingID int64, followers []int64) error {
+	keyFollower := c.followingKey(followingID)
+
+	pipe := c.client.Pipeline()
+
+	pipe.SAdd(ctx, keyFollower, followers)
+	expiration := utils.GetRandomExpiration(24*time.Hour, 1*time.Hour)
+	pipe.Expire(ctx,keyFollower, expiration)
+
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// When IsFollowing == true ,user as follower  When IsFollowing == false, user as following
+func(c *redisFollowCache) Exists(ctx context.Context, userID int64, IsFollowing bool) (bool, error) {
+	key := c.followingKey(userID)
+	
+	if !IsFollowing {
+		key = c.followerKey(userID)
+	} 
+	
+	n, err := c.client.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+
+	return n > 0, nil
+}
+
+func (c *redisFollowCache) GetRelation(ctx context.Context, followerID, followingID int64) (isFollowing, isFollowed bool, err error) {
+    keyFollowing := c.followingKey(followerID)
+	keyFollower := c.followerKey(followingID)
+	
+	pipe := c.client.Pipeline()
+    
+    fCmd := pipe.SIsMember(ctx, keyFollowing, followingID)
+    tCmd := pipe.SIsMember(ctx, keyFollower, followerID)
+    
+    _, err = pipe.Exec(ctx)
+    if err != nil {
+        return false, false, err
+    }
+    
+    return fCmd.Val(), tCmd.Val(), nil
 }
 
 func (c *redisFollowCache) GetFollowingIDs(ctx context.Context, userID int64) ([]int64, error) {
@@ -68,11 +137,10 @@ func (c *redisFollowCache) InvalidatePair(ctx context.Context, followerID, follo
     keyFollowing := c.followingKey(followerID)
 	keyFollower:= c.followerKey(followingID)
 
-	expiration := utils.GetRandomExpiration(15*time.Minute, 1*time.Minute)
 	pipe := c.client.Pipeline()
 
-	pipe.Expire(ctx, keyFollowing, expiration)
-	pipe.Expire(ctx, keyFollower, expiration)
+	pipe.Del(ctx, keyFollowing)
+    pipe.Del(ctx, keyFollower)
    
 	_, err := pipe.Exec(ctx)
 	return err
@@ -81,11 +149,11 @@ func (c *redisFollowCache) InvalidatePair(ctx context.Context, followerID, follo
 func (c *redisFollowCache) InvalidateSelf(ctx context.Context, userID int64) error {
     keyFollowing := c.followingKey(userID)
     keyFollower := c.followerKey(userID)
-	expiration := utils.GetRandomExpiration(1*time.Hour, 10*time.Minute)
-    pipe := c.client.Pipeline()
+   
+	pipe := c.client.Pipeline()
 
-    pipe.Expire(ctx, keyFollowing, expiration)
-    pipe.Expire(ctx, keyFollower, expiration)
+    pipe.Del(ctx, keyFollowing)
+    pipe.Del(ctx, keyFollower)
 
     _, err := pipe.Exec(ctx)
     return err
