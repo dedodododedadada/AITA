@@ -28,23 +28,6 @@ func (c *redisFollowCache) followerKey(userID int64) string {
 }
 
 
-func (c *redisFollowCache) AddFollowLink(ctx context.Context, followerID, followingID int64) error {
-	keyFollowing := c.followingKey(followerID)
-	keyFollower := c.followerKey(followingID)
-
-	expiration := utils.GetRandomExpiration(24*time.Hour, 1*time.Hour)
-
-	pipe := c.client.Pipeline()
-	
-	pipe.SAdd(ctx, keyFollowing, followingID)
-	pipe.Expire(ctx, keyFollowing, expiration)
-	
-	pipe.SAdd(ctx, keyFollower, followerID)
-	pipe.Expire(ctx, keyFollower, expiration)
-
-	_, err := pipe.Exec(ctx)
-	return err
-}
 
 func (c *redisFollowCache) IsFollowing(ctx context.Context, followerID, followingID int64) (bool, error) {
     key := c.followingKey(followerID)
@@ -81,26 +64,24 @@ func (c *redisFollowCache) getIDsFromSet(ctx context.Context, key string) ([]int
 	return ids, nil
 }
 
-func (c *redisFollowCache) RemoveFollowing(ctx context.Context, followerID, followingID int64) error {
+func (c *redisFollowCache) InvalidatePair(ctx context.Context, followerID, followingID int64) error {
     keyFollowing := c.followingKey(followerID)
 	keyFollower:= c.followerKey(followingID)
 
-	expiration := utils.GetRandomExpiration(24*time.Hour, 1*time.Hour)
+	expiration := utils.GetRandomExpiration(15*time.Minute, 1*time.Minute)
 	pipe := c.client.Pipeline()
 
-	pipe.SRem(ctx, keyFollowing, followingID)
 	pipe.Expire(ctx, keyFollowing, expiration)
-	pipe.SRem(ctx, keyFollower, followerID)
 	pipe.Expire(ctx, keyFollower, expiration)
    
 	_, err := pipe.Exec(ctx)
 	return err
 }
 
-func (c *redisFollowCache) Invalidate(ctx context.Context, userID int64) error {
+func (c *redisFollowCache) InvalidateSelf(ctx context.Context, userID int64) error {
     keyFollowing := c.followingKey(userID)
     keyFollower := c.followerKey(userID)
-	expiration := utils.GetRandomExpiration(1*time.Hour, 10 *time.Minute)
+	expiration := utils.GetRandomExpiration(1*time.Hour, 10*time.Minute)
     pipe := c.client.Pipeline()
 
     pipe.Expire(ctx, keyFollowing, expiration)

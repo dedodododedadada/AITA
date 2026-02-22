@@ -34,4 +34,6 @@ var (
 	ErrTokenConflict    = errors.New("トークンは既に存在します")
 
 	ErrInvalidCredentials = errors.New("メールアドレスまたはパスワードが正しくありません")
+
+	ErrInternal = errors.New("内部サーバーエラーが発生しました")
 )

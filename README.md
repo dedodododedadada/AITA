@@ -61,6 +61,7 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 │   ├── errcode/            #  エラー定義。
 │   ├── models/             #　データモデル定義
 │   ├── pkg/
+│   │    ├── app            #  APIレスポンスの共通規格化、標準レスポンス形式（Success/Fail）の構築、JSONエンベロープの定義。
 │   │    ├── crypto         #　暗号化関連。パスワードのハッシュ化やsha256でtokenの生成・検証
 │   │    ├── testutils      #　ユニットテストの補助関数（ヘルパー）
 │   │    └── utils          #  汎用関数

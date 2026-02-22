@@ -5,6 +5,7 @@ import (
 	"aita/internal/dto"
 	"aita/internal/errcode"
 	"aita/internal/models"
+	"aita/internal/pkg/app"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -36,15 +37,15 @@ func TestSignUp(t *testing.T) {
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &models.User{
-					ID: 1,
-					Username: "mock_User",
-					Email: "taro@example.com",
+					ID:           1,
+					Username:     "mock_User",
+					Email:        "taro@example.com",
 					PasswordHash: "password123hash",
-					CreatedAt: time.Now().UTC(),
+					CreatedAt:    time.Now().UTC(),
 				}
 				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
 					return username == "mock_user"
-				}), mock.MatchedBy(func(email string) bool{
+				}), mock.MatchedBy(func(email string) bool {
 					return email == "taro@example.com"
 				}), mock.MatchedBy(func(password string) bool {
 					return password == "password123"
@@ -53,7 +54,7 @@ func TestSignUp(t *testing.T) {
 			},
 			expectedStatus: http.StatusCreated,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "valid_token_string", data["session_token"])
@@ -65,7 +66,7 @@ func TestSignUp(t *testing.T) {
 			setupMock:      func(mu *mockUserService, ms *mockSessionService) {},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 
 				assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
@@ -84,7 +85,7 @@ func TestSignUp(t *testing.T) {
 			},
 			expectedStatus: http.StatusConflict,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 
 				assert.Equal(t, "EMAIL_CONFLICT", resp.Code)
@@ -100,15 +101,15 @@ func TestSignUp(t *testing.T) {
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &models.User{
-					ID: 50, 
-					Username: "error_user",
-					Email:    "issue_fail@test.com",
+					ID:           50,
+					Username:     "error_user",
+					Email:        "issue_fail@test.com",
 					PasswordHash: "password123hashed",
-					CreatedAt: time.Now().UTC(),
+					CreatedAt:    time.Now().UTC(),
 				}
 				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
 					return username == "error_user"
-				}), mock.MatchedBy(func(email string) bool{
+				}), mock.MatchedBy(func(email string) bool {
 					return email == "issue_fail@test.com"
 				}), mock.MatchedBy(func(password string) bool {
 					return password == "password123"
@@ -117,7 +118,7 @@ func TestSignUp(t *testing.T) {
 			},
 			expectedStatus: http.StatusInternalServerError,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
 			},
@@ -173,7 +174,7 @@ func TestLogin(t *testing.T) {
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "login_token_abc", data["session_token"])
@@ -185,7 +186,7 @@ func TestLogin(t *testing.T) {
 			setupMock:      func(mu *mockUserService, ms *mockSessionService) {},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "INVALID_JSON_FORMAT", resp.Code)
 			},
@@ -201,7 +202,7 @@ func TestLogin(t *testing.T) {
 			},
 			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "INVALID_CREDENTIALS", resp.Code)
 				assert.Contains(t, resp.Error, "正しくありません")
@@ -220,7 +221,7 @@ func TestLogin(t *testing.T) {
 			},
 			expectedStatus: http.StatusInternalServerError,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "INTERNAL_SERVER_ERROR", resp.Code)
 			},
@@ -274,7 +275,7 @@ func TestGetMe(t *testing.T) {
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "test_user", data["username"])
@@ -287,7 +288,7 @@ func TestGetMe(t *testing.T) {
 			setupMock:      func(mu *mockUserService) {},
 			expectedStatus: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "SESSION_NOT_FOUND", resp.Code)
 			},
@@ -302,7 +303,7 @@ func TestGetMe(t *testing.T) {
 			},
 			expectedStatus: http.StatusNotFound,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp dto.Response
+				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				assert.Equal(t, "USER_NOT_FOUND", resp.Code)
 			},
@@ -333,73 +334,73 @@ func TestGetMe(t *testing.T) {
 
 func TestUserHandlerLogout(t *testing.T) {
 
-    gin.SetMode(gin.TestMode)
+	gin.SetMode(gin.TestMode)
 
-    const testSessionID int64 = 999
+	const testSessionID int64 = 999
 
-    tests := []struct {
-        name           string
-        setupContext   func(c *gin.Context)
-        setupMock      func(ms *mockSessionService)
-        expectedStatus int
-        expectMsg      string
-    }{
-        {
-            name: "ログアウト成功",
-            setupContext: func(c *gin.Context) {
-                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
-                    SessionID: testSessionID,
-                })
-            },
-            setupMock: func(ms *mockSessionService) {
-                ms.On("Revoke", mock.Anything, testSessionID).Return(nil)
-            },
-            expectedStatus: http.StatusOK,
-            expectMsg:      "ログアウトしました",
-        },
-        {
-            name: "セッションが見たからない",
-            setupContext: func(c *gin.Context) {},
-            setupMock:      func(ms *mockSessionService) {},
-            expectedStatus: http.StatusUnauthorized,
-        },
-        {
-            name: "サーバー内部エラー",
-            setupContext: func(c *gin.Context) {
-                c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
-                    SessionID: testSessionID,
-                })
-            },
-            setupMock: func(ms *mockSessionService) {
-                ms.On("Revoke", mock.Anything, testSessionID).Return(errcode.ErrSessionNotFound)
-            },
-            expectedStatus: http.StatusUnauthorized,
-        },
-    }
+	tests := []struct {
+		name           string
+		setupContext   func(c *gin.Context)
+		setupMock      func(ms *mockSessionService)
+		expectedStatus int
+		expectMsg      string
+	}{
+		{
+			name: "ログアウト成功",
+			setupContext: func(c *gin.Context) {
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
+					SessionID: testSessionID,
+				})
+			},
+			setupMock: func(ms *mockSessionService) {
+				ms.On("Revoke", mock.Anything, testSessionID).Return(nil)
+			},
+			expectedStatus: http.StatusOK,
+			expectMsg:      "ログアウトしました",
+		},
+		{
+			name:           "セッションが見たからない",
+			setupContext:   func(c *gin.Context) {},
+			setupMock:      func(ms *mockSessionService) {},
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name: "サーバー内部エラー",
+			setupContext: func(c *gin.Context) {
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
+					SessionID: testSessionID,
+				})
+			},
+			setupMock: func(ms *mockSessionService) {
+				ms.On("Revoke", mock.Anything, testSessionID).Return(errcode.ErrSessionNotFound)
+			},
+			expectedStatus: http.StatusUnauthorized,
+		},
+	}
 
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
 			ms := new(mockSessionService)
 			h := NewUserHandler(nil, ms)
-			
+
 			tt.setupMock(ms)
 
-            w := httptest.NewRecorder()
-            c, _ := gin.CreateTestContext(w)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
 
-            c.Request, _ = http.NewRequest(http.MethodPost, "/logout", nil)
-        
-            tt.setupContext(c)
+			c.Request, _ = http.NewRequest(http.MethodPost, "/logout", nil)
 
-            h.Logout(c)
+			tt.setupContext(c)
 
-            assert.Equal(t, tt.expectedStatus, w.Code)
-            if tt.expectMsg != "" {
-                assert.Contains(t, w.Body.String(), tt.expectMsg)
-            }
+			h.Logout(c)
 
-            ms.AssertExpectations(t)
-        })
-    }
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectMsg != "" {
+				assert.Contains(t, w.Body.String(), tt.expectMsg)
+			}
+
+			ms.AssertExpectations(t)
+		})
+	}
 }
