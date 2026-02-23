@@ -6,12 +6,13 @@ import(
 
 
 type Session struct{
-	ID            int64        `db:"id"`
-	UserID        int64        `db:"user_id"`
-	TokenHash     string       `db:"token_hash"`
-	ExpiresAt     time.Time    `db:"expires_at"`
-	CreatedAt     time.Time    `db:"created_at"`
+	ID            int64        `db:"id" json:"id"`
+	UserID        int64        `db:"user_id" json:"uid"`
+	TokenHash     string       `db:"token_hash" json:"hash"`
+	ExpiresAt     time.Time    `db:"expires_at" json:"exp"`
+	CreatedAt     time.Time    `db:"created_at" json:"iat"`
 }
+
 
 func(s *Session) IsExpired() bool {
 	if s == nil {

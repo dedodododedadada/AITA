@@ -47,7 +47,7 @@ Redis Streamsを利用した非同期タスク処理により、タイムライ�
 Elasticsearchを統合し、投稿内容の高速検索を提供。
 
 プロジェクト構成
-
+```text
 .
 ├── cmd
 │   └── api/                #　メインプログラム (main.go)

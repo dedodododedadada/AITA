@@ -6,10 +6,14 @@ import (
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
 	"aita/internal/service"
+	"context"
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -21,7 +25,20 @@ func main() {
 		log.Fatal("データベースに接続できません",err)
 	}
 	defer database.Close()
-	log.Printf("データベースへの接続に成功しました")
+	log.Printf("✅ データベースへの接続に成功しました！")
+
+	rdb := redis.NewClient(&redis.Options{
+        Addr:     fmt.Sprintf("%s:%s", config.RedisHost, config.RedisPort),
+        Password: config.RedisPassword,
+    })
+
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+
+    if err := rdb.Ping(ctx).Err(); err != nil {
+        log.Fatalf("Redisに接続できません: %v", err)
+    }
+    log.Println("✅ Redisの接続に成功しました！")
 	
 	hasher := crypto.NewBcryptHasher(bcrypt.DefaultCost)
 	tokenmanager := crypto.NewTokenManager()

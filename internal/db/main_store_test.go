@@ -17,8 +17,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	tc, teardown := testutils.RunTestMain(m)
-	testContext = tc
+	testContext , teardown := testutils.RunTestMain(m)
     log.Println("Migration successful!")
 	testUserStore = NewPostgresUserStore(testContext.TestDB)
 	testSessionStore = NewPostgresSessionStore(testContext.TestDB)

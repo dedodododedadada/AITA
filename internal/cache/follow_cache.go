@@ -12,19 +12,21 @@ import (
 
 type redisFollowCache struct {
 	client *redis.Client
+	prefix string
 }
 
 func NewRedisFollowCache(c *redis.Client) *redisFollowCache {
 	return &redisFollowCache{
 		client: c,
+		prefix: "follow:",
 	}
 }
 
 func (c *redisFollowCache) followingKey(userID int64) string {
-	return fmt.Sprintf("follow:following:%d", userID)
+	return fmt.Sprintf("%sfollowing:%d", c.prefix, userID)
 }
 func (c *redisFollowCache) followerKey(userID int64) string {
-	return fmt.Sprintf("follow:follower:%d", userID)
+	return fmt.Sprintf("%sfollower:%d", c.prefix, userID)
 }
 
 func (c *redisFollowCache) Add(ctx context.Context, followerID, followingID int64) error {

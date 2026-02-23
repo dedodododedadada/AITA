@@ -1,4 +1,19 @@
 services:
+    # app:
+    # build: .                
+    # container_name: aita_app
+    # ports:
+    #   - "8080:8080"
+    # environment:
+    #   - REDIS_HOST=aita_redis 
+    #   - DB_HOST=aita_postgres_v2
+    #   - APP_ENV=production 
+    # networks:
+    #   - aita_network
+    # depends_on:
+    #   - redis
+    #   - postgres
+      
   postgres:
     image: postgres:15-alpine
     container_name: aita_postgres_v2  
@@ -21,7 +36,9 @@ services:
       - "${REDIS_PORT}:6379"  
     volumes:
       - redis_data:/data
-    command: ["redis-server", "--appendonly", "yes"] 
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"] 
     networks:
       - aita_network
 

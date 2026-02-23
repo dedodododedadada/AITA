@@ -39,12 +39,15 @@ type Config struct{
 	DBConnStr        string
 	ServerAddress    string
 	AppEnv           string
+	RedisHost        string
+	RedisPort        string
+	RedisPassword    string
 }
 
 func LoadConfig() *Config{
 	envPath := GetPath(".env")
 	if err := godotenv.Load(envPath); err != nil {
-		log.Printf("エラー :.envが見つかりません")
+		log.Fatal("エラー :.envが見つかりません")
 	}
 
 	appEnv := os.Getenv("APP_ENV")
@@ -63,12 +66,25 @@ func LoadConfig() *Config{
 	if dbURL == "" {
 		log.Fatal("エラー：環境変数 DB_URL が設定されていません")
 	}
+
+	redisHost := os.Getenv("REDIS_HOST")
+	if redisHost == "" {
+		log.Fatal("エラー :.redisHostが見つかりません")
+	}
+
+	redisPort := os.Getenv("REDIS_PORT")
+	if redisPort == "" {
+		log.Fatal("エラー :.redisPortが見つかりません")
+	}
+
 	return &Config{
 		DBConnStr:     dbURL,
 		ServerAddress: ":8080",
 		AppEnv:        appEnv,
+		RedisHost:     redisHost,
+		RedisPort:     redisPort,
+		RedisPassword: os.Getenv("REDIS_PASSWORD"),
 	}
 }
 
-// redisの実装を更新
 
