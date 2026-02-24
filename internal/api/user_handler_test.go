@@ -43,6 +43,10 @@ func TestSignUp(t *testing.T) {
 					PasswordHash: "password123hash",
 					CreatedAt:    time.Now().UTC(),
 				}
+				sessionResp := &dto.SessionResponse{
+					UserID: user.ID,
+					Token: "valid_token_string",
+				}
 				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
 					return username == "mock_user"
 				}), mock.MatchedBy(func(email string) bool {
@@ -50,7 +54,7 @@ func TestSignUp(t *testing.T) {
 				}), mock.MatchedBy(func(password string) bool {
 					return password == "password123"
 				})).Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return("valid_token_string", nil)
+				ms.On("Issue", mock.Anything, user.ID).Return(sessionResp, nil)
 			},
 			expectedStatus: http.StatusCreated,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -114,7 +118,7 @@ func TestSignUp(t *testing.T) {
 				}), mock.MatchedBy(func(password string) bool {
 					return password == "password123"
 				})).Return(user, nil)
-				ms.On("Issue", mock.Anything, int64(50)).Return("", errors.New("redis connection failed"))
+				ms.On("Issue", mock.Anything, int64(50)).Return(nil, errors.New("redis connection failed"))
 			},
 			expectedStatus: http.StatusInternalServerError,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -169,15 +173,19 @@ func TestLogin(t *testing.T) {
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &models.User{ID: 1, Email: "test@example.com"}
+				sessionResp := &dto.SessionResponse{
+					UserID: user.ID,
+					Token: "valid_token_string",
+				}
 				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return("login_token_abc", nil)
+				ms.On("Issue", mock.Anything, user.ID).Return(sessionResp, nil)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
 				var resp app.Response
 				json.Unmarshal(w.Body.Bytes(), &resp)
 				data := resp.Data.(map[string]any)
-				assert.Equal(t, "login_token_abc", data["session_token"])
+				assert.Equal(t, "valid_token_string", data["session_token"])
 			},
 		},
 		{
@@ -217,7 +225,7 @@ func TestLogin(t *testing.T) {
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &models.User{ID: 1, Email: "test@example.com"}
 				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return("", errors.New("internal server error"))
+				ms.On("Issue", mock.Anything, user.ID).Return(nil, errors.New("internal server error"))
 			},
 			expectedStatus: http.StatusInternalServerError,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -267,7 +275,7 @@ func TestGetMe(t *testing.T) {
 		{
 			name: "マイページ取得成功",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 101, SessionID: 104})
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 101,Token: "Valid_token"})
 			},
 			setupMock: func(mu *mockUserService) {
 				user := &models.User{ID: 101, Username: "test_user", Email: "test@example.com"}
@@ -296,7 +304,7 @@ func TestGetMe(t *testing.T) {
 		{
 			name: "ユーザー不在",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 404, SessionID: 104})
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 404, Token: "unexisted_token"})
 			},
 			setupMock: func(mu *mockUserService) {
 				mu.On("ToMyPage", mock.Anything, int64(404)).Return(nil, errcode.ErrUserNotFound)
@@ -336,7 +344,6 @@ func TestUserHandlerLogout(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 
-	const testSessionID int64 = 999
 
 	tests := []struct {
 		name           string
@@ -348,12 +355,18 @@ func TestUserHandlerLogout(t *testing.T) {
 		{
 			name: "ログアウト成功",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
-					SessionID: testSessionID,
-				})
+				auth := &dto.AuthContext{
+					UserID: 101,
+					Token: "valid_token",
+				}
+				c.Set(contextkeys.AuthPayloadKey, auth)
 			},
 			setupMock: func(ms *mockSessionService) {
-				ms.On("Revoke", mock.Anything, testSessionID).Return(nil)
+				ms.On("Revoke", mock.Anything, mock.MatchedBy(func(userID int64) bool {
+					return userID == 101
+				}), mock.MatchedBy(func(token string) bool {
+					return token == "valid_token"
+				})).Return(nil)
 			},
 			expectedStatus: http.StatusOK,
 			expectMsg:      "ログアウトしました",
@@ -367,12 +380,18 @@ func TestUserHandlerLogout(t *testing.T) {
 		{
 			name: "サーバー内部エラー",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
-					SessionID: testSessionID,
-				})
+				auth := &dto.AuthContext{
+					UserID: 101,
+					Token: "valid_token",
+				}
+				c.Set(contextkeys.AuthPayloadKey, auth)
 			},
 			setupMock: func(ms *mockSessionService) {
-				ms.On("Revoke", mock.Anything, testSessionID).Return(errcode.ErrSessionNotFound)
+				ms.On("Revoke", mock.Anything, mock.MatchedBy(func(userID int64) bool {
+					return userID == 101
+				}), mock.MatchedBy(func(token string) bool {
+					return token == "valid_token"
+				})).Return(errcode.ErrSessionNotFound)
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},

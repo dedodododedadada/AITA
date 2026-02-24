@@ -2,6 +2,7 @@ package repository
 
 import (
 	"aita/internal/dto"
+	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
 	"fmt"
@@ -35,9 +36,7 @@ func (r *sessionRepository) Create(ctx context.Context, sr *dto.SessionRecord) (
 	}
 
 	if newSession == nil {
-		detailErr := fmt.Errorf("セッション作成後に返却されたオブジェクトが nil です")
-    	log.Printf("[CRITICAL] %v", detailErr)
-		return nil, detailErr
+		return nil, errcode.ErrInternal
 	}
 
 	return dto.ToSessionRecord(newSession), nil

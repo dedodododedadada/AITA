@@ -5,12 +5,6 @@ import (
 	"time"
 )
 
-type AuthContext struct {
-	UserID    int64
-	SessionID int64
-	Role      string
-}
-
 type SessionRecord struct {
 	UserID    int64
 	TokenHash string
@@ -18,6 +12,18 @@ type SessionRecord struct {
     CreatedAt time.Time
 }
 
+type SessionResponse struct {
+    UserID    int64
+	Token     string
+	ExpiresAt time.Time
+    CreatedAt time.Time
+}
+
+type AuthContext struct {
+	UserID    int64
+	Token     string
+	Role      string
+}
 
 func (sr *SessionRecord) ToModel() *models.Session {
     if  sr == nil {
@@ -37,10 +43,23 @@ func ToSessionRecord(ms *models.Session) *SessionRecord {
         return nil
     }
 
-       return &SessionRecord{
+    return &SessionRecord{
         UserID: ms.UserID,
         TokenHash: ms.TokenHash,
         ExpiresAt: ms.ExpiresAt,
         CreatedAt: ms.CreatedAt,
+    }
+}
+
+func ToSessionResponse(s *SessionRecord, token string) *SessionResponse {
+    if s == nil {
+        return nil
+    }
+
+    return &SessionResponse{
+        UserID: s.UserID,
+        Token: token,
+        ExpiresAt: s.ExpiresAt,
+        CreatedAt: s.CreatedAt,
     }
 }

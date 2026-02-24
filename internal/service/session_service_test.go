@@ -1,6 +1,7 @@
 package service
 
 import (
+	"aita/internal/dto"
 	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
@@ -18,40 +19,39 @@ func TestIssue(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := map[string]struct {
 		userID    int64
-		setupMock func(ms *mockSessionStore, mt *mockTokenManager)
+		setupMock func(ms *mockSessionRepository, mt *mockTokenManager)
 		wantedErr error
 		errMsg    string
 	}{
 		"発行成功": {
 			userID: 1,
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
 				rawToken := "generated_raw_token_32_characters_long"
 				hashedToken := "hashed_token"
 
 				mt.On("Generate", 32).Return(rawToken, nil)
 				mt.On("Hash", rawToken).Return(hashedToken)
-				expectedSession := &models.Session{
-					ID:        1,
+				expectedRecord := &dto.SessionRecord{
 					UserID:    1,
 					TokenHash: hashedToken,
 					CreatedAt: time.Now().UTC(),
 					ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 				}
 
-				ms.On("Create", mock.Anything, mock.MatchedBy(func(s *models.Session) bool {
-					return s.UserID == 1 && s.TokenHash == hashedToken
-				})).Return(expectedSession, nil)
+				ms.On("Create", mock.Anything, mock.MatchedBy(func(sr *dto.SessionRecord) bool {
+					return sr.TokenHash == hashedToken
+				})).Return(expectedRecord, nil)
 			},
 			wantedErr: nil,
 		},
 		"バリデーションエラー": {
 			userID:    0,
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {},
 			wantedErr: errcode.ErrRequiredFieldMissing,
 		},
 		"トークン生成失敗": {
 			userID: 1,
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
 				mt.On("Generate", 32).Return("", errMockTokenFailed)
 			},
 			wantedErr: errMockTokenFailed,
@@ -59,7 +59,7 @@ func TestIssue(t *testing.T) {
 		},
 		"DB保存失敗": {
 			userID: 1,
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
 				mt.On("Generate", 32).Return("token", nil)
 				mt.On("Hash", "token").Return("hash")
 				ms.On("Create", mock.Anything, mock.Anything).Return(nil, errMockInternal)
@@ -71,7 +71,7 @@ func TestIssue(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			ms := new(mockSessionStore)
+			ms := new(mockSessionRepository)
 			mu := new(mockUserService)
 			mt := new(mockTokenManager)
 
@@ -88,7 +88,7 @@ func TestIssue(t *testing.T) {
 				assert.Empty(t, res) 
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, "generated_raw_token_32_characters_long", res)
+				assert.Equal(t, "generated_raw_token_32_characters_long", res.Token)
 			}
 
 			ms.AssertExpectations(t)
@@ -101,7 +101,7 @@ func TestAuthenticate(t *testing.T) {
 	type testCase struct {
 		name      string
 		token     string
-		setupMock func(ms *mockSessionStore, mt *mockTokenManager)
+		setupMock func(ms *mockSessionRepository, mt *mockTokenManager)
 		wantedErr error
 		errMsg    string
 	}
@@ -109,11 +109,10 @@ func TestAuthenticate(t *testing.T) {
 		{
 			name:  "認証成功",
 			token: "valid_token_that_is_long_enough_32char",
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
 				tokenHash := "hashed_token"
 				mt.On("Hash", mock.Anything).Return(tokenHash)
-				ms.On("GetByHash", mock.Anything, tokenHash).Return(&models.Session{
-					ID:        1,
+				ms.On("Get", mock.Anything, tokenHash).Return(&dto.SessionRecord{
 					UserID:    10,
 					TokenHash: "hashed_token",
 					ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
@@ -125,27 +124,27 @@ func TestAuthenticate(t *testing.T) {
 		{
 			name:      "Tokenが空",
 			token:     "",
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {},
 			wantedErr: errcode.ErrSessionNotFound,
 		},
 		{
 			name:      "Tokenが短すぎる",
 			token:     "too_short",
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {},
 			wantedErr: errcode.ErrInvalidTokenFormat,
 		},
 		{
 			name:      "Tokenが長すぎる",
 			token:     strings.Repeat("a", 256),
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {},
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {},
 			wantedErr: errcode.ErrInvalidTokenFormat,
 		},
 		{
 			name:  "セッションが見つからない",
 			token: "unknown_token_long_enough_32char",
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
 				mt.On("Hash", mock.Anything).Return("unknown_hash")
-				ms.On("GetByHash", mock.Anything, "unknown_hash").Return(nil, errMockTokenFailed)
+				ms.On("Get", mock.Anything, "unknown_hash").Return(nil, errMockTokenFailed)
 			},
 			wantedErr: errMockTokenFailed,
 			errMsg:    "セッションの取得に失敗しました",
@@ -153,9 +152,9 @@ func TestAuthenticate(t *testing.T) {
 		{
 			name:  "DB内部エラー",
 			token: "valid_token_that_is_long_enough_32char",
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
 				mt.On("Hash", mock.Anything).Return("hash")
-				ms.On("GetByHash", mock.Anything, "hash").Return(nil, errMockTokenFailed)
+				ms.On("Get", mock.Anything, "hash").Return(nil, errMockTokenFailed)
 			},
 			wantedErr: errMockTokenFailed,
 			errMsg:    "セッションの取得に失敗しました",
@@ -163,11 +162,10 @@ func TestAuthenticate(t *testing.T) {
 		{
 			name:  "期限切れ",
 			token: "valid_token_that_is_long_enough_32char",
-			setupMock: func(ms *mockSessionStore, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
 				tokenHash := "hashed_token"
 				mt.On("Hash", mock.Anything).Return(tokenHash)
-				ms.On("GetByHash", mock.Anything, tokenHash).Return(&models.Session{
-					ID:        1,
+				ms.On("Get", mock.Anything, tokenHash).Return(&dto.SessionRecord{
 					UserID:    10,
 					TokenHash: "hashed_token",
 					ExpiresAt: time.Now().Add(-1 * time.Hour).UTC(),
@@ -180,7 +178,7 @@ func TestAuthenticate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ms := new(mockSessionStore)
+			ms := new(mockSessionRepository)
 			mt := new(mockTokenManager)
 			mu := new(mockUserService)
 
@@ -214,7 +212,7 @@ func TestValidate(t *testing.T) {
 	type testCase struct {
 		name      string
 		token     string
-		setupMock func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager)
+		setupMock func(ms *mockSessionRepository, mu *mockUserService, mt *mockTokenManager)
 		wantedErr error
 		errMsg    string
 	}
@@ -225,15 +223,15 @@ func TestValidate(t *testing.T) {
 		{
 			name:      "【失敗】トークンが空（サービス層でのガード）",
 			token:     "",
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {},
+			setupMock: func(ms *mockSessionRepository, mu *mockUserService, mt *mockTokenManager) {},
 			wantedErr: errcode.ErrSessionNotFound,
 		},
 		{
 			name:  "【失敗】データベース内部エラー",
 			token: validToken,
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mu *mockUserService, mt *mockTokenManager) {
 				mt.On("Hash", validToken).Return("hashed_ok")
-				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(nil, errMockInternal)
+				ms.On("Get", mock.Anything, "hashed_ok").Return(nil, errMockInternal)
 			},
 			wantedErr: errMockInternal,
 			errMsg:    "セッションの取得に失敗しました",
@@ -241,16 +239,15 @@ func TestValidate(t *testing.T) {
 		{
 			name:  "【成功】標準的な検証",
 			token: validToken,
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mu *mockUserService, mt *mockTokenManager) {
 				mt.On("Hash", validToken).Return("hashed_ok")
-				session := &models.Session{
-					ID:        1,
+				record := &dto.SessionRecord{
 					UserID:    10,
 					TokenHash: "hashed_ok",
 					ExpiresAt: time.Now().Add(23 * time.Hour).UTC(),
 					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
 				}
-				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
+				ms.On("Get", mock.Anything, "hashed_ok").Return(record, nil)
 				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
 			},
 			wantedErr: nil,
@@ -258,38 +255,36 @@ func TestValidate(t *testing.T) {
 		{
 			name:  "【成功】セッションの自動更新がトリガーされる",
 			token: validToken,
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mu *mockUserService, mt *mockTokenManager) {
 				mt.On("Hash", validToken).Return("hashed_ok")
 				oldExpiry := time.Now().Add(1 * time.Hour).UTC()
-				session := &models.Session{
-					ID:        1,
+				record := &dto.SessionRecord{
 					UserID:    10,
 					TokenHash: "hashed_ok",
 					ExpiresAt: oldExpiry,
 					CreatedAt: time.Now().Add(-23 * time.Hour).UTC(),
 				}
-				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
+				ms.On("Get", mock.Anything, "hashed_ok").Return(record, nil)
 				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
-				ms.On("UpdateExpiresAt", mock.Anything, mock.MatchedBy(func(t time.Time) bool {
-					expected := time.Now().Add(models.SessionDuration).UTC()
-					return t.After(oldExpiry) && t.Sub(expected).Abs() < 10*time.Second
-				}), int64(1)).Return(nil)
+				ms.On("Update", mock.Anything, mock.MatchedBy(func(sr *dto.SessionRecord) bool {
+					expected := time.Now().Add(SessionDuration).UTC()
+					return sr.ExpiresAt.After(oldExpiry) && sr.ExpiresAt.Sub(expected).Abs() < 10*time.Second
+				})).Return(nil)
 			},
 			wantedErr: nil,
 		},
 		{
 			name:  "【失敗】セッションは有効だがユーザーが存在しない（退会済みなど）",
 			token: validToken,
-			setupMock: func(ms *mockSessionStore, mu *mockUserService, mt *mockTokenManager) {
+			setupMock: func(ms *mockSessionRepository, mu *mockUserService, mt *mockTokenManager) {
 				mt.On("Hash", validToken).Return("hashed_ok")
-				session := &models.Session{
-					ID:        1,
+				record := &dto.SessionRecord{
 					UserID:    10,
 					TokenHash: "hashed_ok",
 					ExpiresAt: time.Now().Add(24 * time.Hour).UTC(),
 					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
 				}
-				ms.On("GetByHash", mock.Anything, "hashed_ok").Return(session, nil)
+				ms.On("Get", mock.Anything, "hashed_ok").Return(record, nil)
 				mu.On("ToMyPage", mock.Anything, int64(10)).Return(nil, errcode.ErrUserNotFound)
 			},
 			wantedErr: errcode.ErrUserNotFound,
@@ -298,7 +293,7 @@ func TestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ms := new(mockSessionStore)
+			ms := new(mockSessionRepository)
 			mt := new(mockTokenManager)
 			mu := new(mockUserService)
 
@@ -318,7 +313,7 @@ func TestValidate(t *testing.T) {
 				assert.NotNil(t, res)
 
 				if tt.name == "【成功】セッションの自動更新がトリガーされる" {
-					expectedNewExpiry := time.Now().Add(models.SessionDuration).UTC()
+					expectedNewExpiry := time.Now().Add(SessionDuration).UTC()
 					assert.WithinDuration(t, expectedNewExpiry, res.ExpiresAt, 10*time.Second)
 				}
 			}
@@ -331,31 +326,30 @@ func TestValidate(t *testing.T) {
 }
 
 func TestRefreshSession(t *testing.T) {
-	initialExpiry := time.Now().Add(-1 * time.Hour).UTC()
-	session := &models.Session{
-		ID:        1,
+	initialExpiry := time.Now().Add(1 * time.Hour).UTC()
+	sr := &dto.SessionRecord{
 		UserID:    10,
+		TokenHash: "valid_token_hash",
 		ExpiresAt: initialExpiry,
 	}
 
 	tests := []struct {
 		name      string
-		setupMock func(ms *mockSessionStore)
+		setupMock func(ms *mockSessionRepository)
 		wantErr   bool
 		errMsg    string
 	}{
 		{
 			name: "セッション期限が正常に更新される",
-			setupMock: func(ms *mockSessionStore) {
-				ms.On("UpdateExpiresAt", mock.Anything, mock.AnythingOfType("time.Time"), int64(1)).
-					Return(nil)
+			setupMock: func(ms *mockSessionRepository) {
+				ms.On("Update", mock.Anything,mock.Anything).Return(nil)
 			},
 			wantErr: false,
 		},
 		{
 			name: "データベース更新エラー",
-			setupMock: func(ms *mockSessionStore) {
-				ms.On("UpdateExpiresAt", mock.Anything, mock.Anything, int64(1)).
+			setupMock: func(ms *mockSessionRepository) {
+				ms.On("Update", mock.Anything, mock.Anything).
 					Return(errMockInternal)
 			},
 			wantErr: true,
@@ -365,23 +359,24 @@ func TestRefreshSession(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ms := new(mockSessionStore)
+			ms := new(mockSessionRepository)
 			mt := new(mockTokenManager)
 			mu := new(mockUserService)
 
 			tt.setupMock(ms)
 			svc := NewSessionService(ms, mu, mt)
 
-			err := svc.refreshSession(context.Background(), session)
+			err := svc.refreshSession(context.Background(), sr)
+			
 
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errMsg)
 			} else {
 				assert.NoError(t, err)
-				assert.True(t, session.ExpiresAt.After(initialExpiry), "ExpiresAt が更新後の方が新しくなっているべき")
-				expectedExpiry := time.Now().Add(models.SessionDuration)
-				assert.WithinDuration(t, expectedExpiry, session.ExpiresAt, 10*time.Second)
+				assert.True(t, sr.ExpiresAt.After(initialExpiry), "ExpiresAt が更新後の方が新しくなっているべき")
+				expectedExpiry := time.Now().Add(SessionDuration)
+				assert.WithinDuration(t, expectedExpiry, sr.ExpiresAt, 10*time.Second)
 			}
 
 			ms.AssertExpectations(t)
@@ -392,33 +387,64 @@ func TestRefreshSession(t *testing.T) {
 func TestRevoke(t *testing.T) {
 	type testCase struct {
 		name           string
-		SessionID      int64
-		setupMock      func(ms *mockSessionStore)
+		userID         int64
+		token          string
+		setupMock      func(ms *mockSessionRepository,  mt *mockTokenManager)
 		wantedErr      error
 		expectContains string
 	}
 
-
+	validToken := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 	tests := []testCase{
 		{
 			name:  "【成功】正常にログアウトできる",
-			SessionID : int64(101),
-			setupMock: func(ms *mockSessionStore) {
-				ms.On("DeleteBySessionID", mock.Anything,  int64(101)).Return(nil)
+			userID: int64(101),
+			token: validToken,
+			setupMock: func(ms *mockSessionRepository,  mt *mockTokenManager) {
+				check := &dto.SessionRecord{
+					UserID: 101,
+					TokenHash: "token_hash",
+					ExpiresAt: time.Now().Add(24*time.Hour).UTC(),
+					CreatedAt: time.Now().Add(-1*time.Hour).UTC(),
+				}
+				mt.On("Hash", validToken).Return("token_hash", nil)
+				ms.On("Get", mock.Anything, "token_hash").Return(check, nil)
+				ms.On("Delete", mock.Anything, mock.MatchedBy(func(sr *dto.SessionRecord) bool {
+					return sr.UserID == check.UserID && sr.TokenHash == check.TokenHash
+				})).Return(nil)
 			},
 			wantedErr: nil,
 		},
 		{
-			name:      "【失敗】無効なセッションID",
-			SessionID : int64(0),
-			setupMock: func(ms *mockSessionStore) {},
-			wantedErr: errcode.ErrInvalidSessionID,
+			name:      "【失敗】無効なユーザーID",
+			userID : int64(101),
+			token: validToken,
+			setupMock: func(ms *mockSessionRepository,  mt *mockTokenManager) {
+				illCheck := &dto.SessionRecord{
+					UserID: 200,
+					TokenHash: "ill_token_hash",
+					ExpiresAt: time.Now().Add(24*time.Hour).UTC(),
+					CreatedAt: time.Now().Add(-1*time.Hour).UTC(),
+				}
+				mt.On("Hash", validToken).Return("ill_token_hash", nil)
+				ms.On("Get", mock.Anything, "ill_token_hash").Return(illCheck, nil)
+			},
+			wantedErr: errcode.ErrForbidden,
 		},
 		{
 			name:  "【失敗】DBエラー時にラップされたエラーを返す",
-			SessionID : int64(101),
-			setupMock: func(ms *mockSessionStore) {
-				ms.On("DeleteBySessionID", mock.Anything, int64(101)).Return(errMockInternal)
+			userID : int64(101),
+			token: validToken,
+			setupMock: func(ms *mockSessionRepository,  mt *mockTokenManager){
+				check := &dto.SessionRecord{
+					UserID: 101,
+					TokenHash: "token_hash",
+					ExpiresAt: time.Now().Add(24*time.Hour).UTC(),
+					CreatedAt: time.Now().Add(-1*time.Hour).UTC(),
+				}
+				mt.On("Hash", validToken).Return("token_hash", nil)
+				ms.On("Get", mock.Anything, "token_hash").Return(check, nil)
+				ms.On("Delete", mock.Anything, mock.Anything).Return(errMockInternal)
 			},
 			wantedErr:      errMockInternal,
 			expectContains: "セッションの削除に失敗しました",
@@ -427,14 +453,14 @@ func TestRevoke(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ms := new(mockSessionStore)
+			ms := new(mockSessionRepository)
 			mt := new(mockTokenManager)
 			mu := new(mockUserService)
 			svc := NewSessionService(ms, mu, mt)
 
-			tt.setupMock(ms)
+			tt.setupMock(ms, mt)
 
-			err := svc.Revoke(context.Background(), tt.SessionID)
+			err := svc.Revoke(context.Background(), tt.userID, tt.token)
 
 			if tt.wantedErr != nil {
 				assert.ErrorIs(t, err, tt.wantedErr)

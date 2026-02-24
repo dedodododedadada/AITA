@@ -64,17 +64,22 @@ func LoadConfig() *Config{
 	}
 
 	if dbURL == "" {
-		log.Fatal("エラー：環境変数 DB_URL が設定されていません")
+		log.Fatal("エラー: 環境変数 DB_URL が設定されていません")
 	}
 
 	redisHost := os.Getenv("REDIS_HOST")
 	if redisHost == "" {
-		log.Fatal("エラー :.redisHostが見つかりません")
+		log.Fatal("エラー: redisHostが見つかりません")
 	}
 
 	redisPort := os.Getenv("REDIS_PORT")
 	if redisPort == "" {
-		log.Fatal("エラー :.redisPortが見つかりません")
+		log.Fatal("エラー: redisPortが見つかりません")
+	}
+
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	if redisPassword == "" {
+		log.Fatal("エラー: redisPasswordが見つかりません")
 	}
 
 	return &Config{

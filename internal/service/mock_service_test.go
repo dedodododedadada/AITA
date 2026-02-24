@@ -1,11 +1,11 @@
 package service
 
 import (
+	"aita/internal/dto"
 	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"context"
 	"errors"
-	"time"
 
 	"github.com/stretchr/testify/mock"
 )
@@ -35,27 +35,27 @@ func (m *mockUserStore) GetByID(ctx context.Context, id int64) (*models.User, er
 	return testutils.SafeGet[models.User](args,0), args.Error(1)
 }
 
-type mockSessionStore struct {
+type mockSessionRepository struct {
 	mock.Mock
 }
 
-func (m *mockSessionStore) Create(ctx context.Context, session *models.Session) (*models.Session, error) {
-	args := m.Called(ctx, session)
-	return testutils.SafeGet[models.Session](args, 0), args.Error(1)
+func (m *mockSessionRepository) Create(ctx context.Context, sr *dto.SessionRecord) (*dto.SessionRecord, error){
+	args := m.Called(ctx, sr)
+	return testutils.SafeGet[dto.SessionRecord](args, 0), args.Error(1)
 }
 
-func(m *mockSessionStore) GetByHash(ctx context.Context, tokenHash string) (*models.Session, error) {
+func(m *mockSessionRepository) Get(ctx context.Context, tokenHash string) (*dto.SessionRecord, error)  {
 	args := m.Called(ctx, tokenHash)
-	return testutils.SafeGet[models.Session](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.SessionRecord](args, 0), args.Error(1)
 }
 
-func(m *mockSessionStore) UpdateExpiresAt(ctx context.Context, expiresAt time.Time, id int64) error {
-	args := m.Called(ctx, expiresAt, id)
+func(m *mockSessionRepository) Update(ctx context.Context, sr *dto.SessionRecord) error {
+	args := m.Called(ctx, sr)
 	return args.Error(0)
 }
 
-func(m *mockSessionStore) DeleteBySessionID(ctx context.Context, sessionID int64) error {
-	args := m.Called(ctx,sessionID)
+func(m *mockSessionRepository) Delete(ctx context.Context, sr *dto.SessionRecord) error{
+	args := m.Called(ctx, sr)
 	return args.Error(0)
 }
 

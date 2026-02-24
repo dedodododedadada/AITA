@@ -19,8 +19,8 @@ type UserService interface {
 }
 
 type SessionManager interface {
-	Issue(ctx context.Context, userID int64) (string, error)
-	Revoke(ctx context.Context, sessionID int64) error
+	Issue(ctx context.Context, userID int64) (*dto.SessionResponse, error)
+	Revoke(ctx context.Context, userID int64, token string) error
 }
 
 type UserHandler struct {
@@ -36,14 +36,14 @@ func NewUserHandler(usvc UserService, sm SessionManager) *UserHandler {
 }
 
 func (h *UserHandler) respondWithToken(c *gin.Context, user *models.User, statusCode int) {
-	token, err := h.sessionService.Issue(c.Request.Context(), user.ID)
+	response, err := h.sessionService.Issue(c.Request.Context(), user.ID)
 	if err != nil {
 		c.JSON(errcode.GetStatusCode(err), app.Fail(err))
 		return
 	}
 
 	loginData := dto.LoginResponse{
-		SessionToken: token,
+		SessionToken: response.Token,
 		User:         dto.NewUserResponse(user),
 	}
 	c.JSON(statusCode, app.Success(loginData))
@@ -115,7 +115,8 @@ func (h *UserHandler) Logout(c *gin.Context) {
 		c.JSON(errcode.GetStatusCode(err), app.Fail(err))
 		return
 	}
-	if err := h.sessionService.Revoke(c.Request.Context(), auth.SessionID); err != nil {
+
+	if err := h.sessionService.Revoke(c.Request.Context(), auth.UserID, auth.Token); err != nil {
 		c.JSON(errcode.GetStatusCode(err), app.Fail(err))
 		return
 	}

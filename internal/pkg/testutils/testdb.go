@@ -2,6 +2,7 @@ package testutils
 
 import (
 	"aita/internal/configuration"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -14,10 +15,12 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 )
 
 type TestContext struct {
 	TestDB *sqlx.DB
+	TestRDB *redis.Client
 	DSN string
 }
 
@@ -32,8 +35,10 @@ func OpenDB(dsn string) (*sqlx.DB, error) {
 	}
 	return db, err
 }
+
+
 func  (ctx *TestContext) CleanupTestDB() {
-	_, err := ctx.TestDB.Exec(`TRUNCATE TABLE sessions, tweets, users RESTART IDENTITY CASCADE;`)
+	_, err := ctx.TestDB.Exec(`TRUNCATE TABLE follows, tweets, sessions, users RESTART IDENTITY CASCADE;`)
 	if err != nil {
 		log.Fatalf("テストデータベースに接続できません: %v", err)
 	}
@@ -71,6 +76,13 @@ func RunTestMain(m *testing.M) (*TestContext, func()) {
 	if err := mig.Up(); err != nil && err != migrate.ErrNoChange  {
 		log.Fatalf("マイグレーションの実行に失敗しました: %v", err)
 	}
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr: fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort),
+		Password: cfg.RedisPassword,
+		DB: 1,
+	})
+
 	teardown := func() {
 		srcErr, dbErr := mig.Close()
 		if srcErr != nil || dbErr != nil {
@@ -80,6 +92,7 @@ func RunTestMain(m *testing.M) (*TestContext, func()) {
 	}
 	return &TestContext{
 		TestDB: db,
+		TestRDB: rdb,
 		DSN:    cfg.DBConnStr,
 	}, teardown
 }

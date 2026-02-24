@@ -4,7 +4,6 @@ import (
 	"aita/internal/contextkeys"
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"aita/internal/pkg/app"
 	"context"
 
@@ -12,9 +11,9 @@ import (
 )
 
 type AuthSessionService interface {
-	Validate(ctx context.Context, token string) (*models.Session, error)
+	Validate(ctx context.Context, token string) (*dto.SessionResponse, error)
 }
-
+// Note : add asynchronous sliding expiration
 func AuthMiddleware(svc AuthSessionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -23,21 +22,15 @@ func AuthMiddleware(svc AuthSessionService) gin.HandlerFunc {
 			c.AbortWithStatusJSON(errcode.GetStatusCode(err), app.Fail(err))
 			return
 		}
-		session, err := svc.Validate(c.Request.Context(), token)
+		response, err := svc.Validate(c.Request.Context(), token)
 		if err != nil {
 			c.AbortWithStatusJSON(errcode.GetStatusCode(err), app.Fail(err))
 			return
 		}
 
-		if session == nil {
-			err := errcode.ErrSessionNotFound
-			c.AbortWithStatusJSON(errcode.GetStatusCode(err), app.Fail(err))
-			return
-		}
-
-		c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
-			UserID:    session.UserID,
-			SessionID: session.ID,
+		c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext {
+			UserID: response.UserID,
+			Token: response.Token,
 		})
 		c.Next()
 	}

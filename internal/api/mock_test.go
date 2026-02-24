@@ -1,6 +1,7 @@
 package api
 
 import (
+	"aita/internal/dto"
 	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"context"
@@ -35,19 +36,19 @@ func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*models.U
 	return testutils.SafeGet[models.User](args, 0), args.Error(1)
 }
 
-func (m *mockSessionService) Issue(ctx context.Context, userID int64) (string, error) {
+func (m *mockSessionService)Issue(ctx context.Context, userID int64) (*dto.SessionResponse, error) {
 	args := m.Called(ctx, userID)
-	return args.String(0), args.Error(1)
+	return testutils.SafeGet[dto.SessionResponse](args, 0), args.Error(1)
 }
 
-func (m *mockSessionService) Revoke(ctx context.Context, sessionID int64) error {
-	args := m.Called(ctx, sessionID)
+func (m *mockSessionService)Revoke(ctx context.Context, userID int64, token string) error {
+	args := m.Called(ctx, userID, token)
 	return args.Error(0)
 }
 
-func (m *mockSessionService) Validate(ctx context.Context, token string) (*models.Session, error) {
+func (m *mockSessionService) Validate(ctx context.Context, token string) (*dto.SessionResponse, error) {
 	args := m.Called(ctx, token)
-	return testutils.SafeGet[models.Session](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.SessionResponse](args, 0), args.Error(1)
 }
 
 func (m *mockTweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*models.Tweet, error) {

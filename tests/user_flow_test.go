@@ -3,6 +3,7 @@ package tests
 import (
 	"aita/internal/api"
 	"aita/internal/dto"
+	"aita/internal/repository"
 	"aita/internal/service"
 	"bytes"
 	"encoding/json"
@@ -19,7 +20,8 @@ import (
 func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
 	userService := service.NewUserService(testUserStore, testHasher)
-	sessionService := service.NewSessionService(testSessionStore, userService, testTokemanager)
+	sesseionRepository := repository.NewSessionRepository(testSessionStore)
+	sessionService := service.NewSessionService(sesseionRepository, userService, testTokemanager)
 	tweetService := service.NewTweetService(testTweetStore)
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)

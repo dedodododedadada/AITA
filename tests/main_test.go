@@ -4,6 +4,7 @@ import (
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
 	"aita/internal/pkg/testutils"
+	"aita/internal/repository"
 	"aita/internal/service"
 	"log"
 	"os"
@@ -14,7 +15,7 @@ import (
 
 var (
 	testUserStore    service.UserStore       
-	testSessionStore service.SessionStore
+	testSessionStore repository.SessionStore
 	testTweetStore   service.TweetStore
 	testTokemanager  service.TokenManager
 	testHasher       service.PasswordHasher
@@ -22,15 +23,15 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	tc, teardown := testutils.RunTestMain(m)
-	testContext = tc
+	var teardown func()
+	testContext, teardown = testutils.RunTestMain(m)
 	log.Println("Database migration successful!")
 
 	testHasher = crypto.NewBcryptHasher(bcrypt.DefaultCost)
 	testTokemanager = crypto.NewTokenManager()
-
+	
 	testUserStore = db.NewPostgresUserStore(testContext.TestDB)
-	testSessionStore = db.NewPostgresSessionStore(testContext.TestDB)
+	testSessionStore = db.NewRedisSessionStore(testContext.TestRDB)
 	testTweetStore = db.NewPostgresTweetStore(testContext.TestDB)
 	
 	

@@ -5,6 +5,7 @@ import (
 	"aita/internal/configuration"
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
+	"aita/internal/repository"
 	"aita/internal/service"
 	"context"
 	"fmt"
@@ -20,7 +21,7 @@ import (
 
 func main() {
 	config := configuration.LoadConfig()
-	database, err:= sqlx.Connect("postgres",config.DBConnStr)
+	database, err:= sqlx.Connect("postgres", config.DBConnStr)
 	if err!= nil {
 		log.Fatal("データベースに接続できません",err)
 	}
@@ -30,6 +31,7 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{
         Addr:     fmt.Sprintf("%s:%s", config.RedisHost, config.RedisPort),
         Password: config.RedisPassword,
+		DB: 0, 
     })
 
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -43,10 +45,11 @@ func main() {
 	hasher := crypto.NewBcryptHasher(bcrypt.DefaultCost)
 	tokenmanager := crypto.NewTokenManager()
 	userStore := db.NewPostgresUserStore(database)
-	sessionStore := db.NewPostgresSessionStore(database)
+	sessionStore := db.NewRedisSessionStore(rdb)
 	tweetStore := db.NewPostgresTweetStore(database)
+	serviceRepository := repository.NewSessionRepository(sessionStore)
 	userService := service.NewUserService(userStore, hasher)
-	sessionService := service.NewSessionService(sessionStore, userService, tokenmanager)
+	sessionService := service.NewSessionService(serviceRepository, userService, tokenmanager)
 	tweetService := service.NewTweetService(tweetStore)
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
