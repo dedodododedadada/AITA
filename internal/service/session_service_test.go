@@ -5,6 +5,7 @@ import (
 	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -253,27 +254,6 @@ func TestValidate(t *testing.T) {
 			wantedErr: nil,
 		},
 		{
-			name:  "【成功】セッションの自動更新がトリガーされる",
-			token: validToken,
-			setupMock: func(ms *mockSessionRepository, mu *mockUserService, mt *mockTokenManager) {
-				mt.On("Hash", validToken).Return("hashed_ok")
-				oldExpiry := time.Now().Add(1 * time.Hour).UTC()
-				record := &dto.SessionRecord{
-					UserID:    10,
-					TokenHash: "hashed_ok",
-					ExpiresAt: oldExpiry,
-					CreatedAt: time.Now().Add(-23 * time.Hour).UTC(),
-				}
-				ms.On("Get", mock.Anything, "hashed_ok").Return(record, nil)
-				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
-				ms.On("Update", mock.Anything, mock.MatchedBy(func(sr *dto.SessionRecord) bool {
-					expected := time.Now().Add(SessionDuration).UTC()
-					return sr.ExpiresAt.After(oldExpiry) && sr.ExpiresAt.Sub(expected).Abs() < 10*time.Second
-				})).Return(nil)
-			},
-			wantedErr: nil,
-		},
-		{
 			name:  "【失敗】セッションは有効だがユーザーが存在しない（退会済みなど）",
 			token: validToken,
 			setupMock: func(ms *mockSessionRepository, mu *mockUserService, mt *mockTokenManager) {
@@ -324,35 +304,161 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+func TestExpirationCheck(t *testing.T) {
+	tests := []struct {
+		name		 	string
+		setupExpiresAt  time.Time
+		setupCreatedAt  time.Time
+		expectedErr  	error
+	} {
+		{
+			name: "正常系：期限内",
+			setupExpiresAt: time.Now().Add(24*time.Hour).UTC(),
+        	setupCreatedAt: time.Now().Add(-48*time.Hour).UTC(),
+			expectedErr: nil,
+		},
+		{
+			name: "異常系：なし",
+			expectedErr: errcode.ErrRequiredFieldMissing,
+		},
+		{
+			name: "異常系：期限切れ",
+        	setupExpiresAt: time.Now().Add(-1*time.Hour).UTC(),
+        	setupCreatedAt: time.Now().Add(-96*time.Hour).UTC(),
+			expectedErr: errcode.ErrSessionExpired,
+		},
+		{
+			name: "異常系：最長時間超え",
+        	setupExpiresAt: time.Now().Add(1*time.Hour).UTC(),
+        	setupCreatedAt: time.Now().Add(-8*24*time.Hour).UTC(),
+			expectedErr: errcode.ErrSessionExpired,
+		},
+	}
 
-func TestRefreshSession(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ms := new(mockSessionRepository)
+			mt := new(mockTokenManager)
+			mu := new(mockUserService)
+			svc := NewSessionService(ms, mu, mt)
+			err := svc.expirationCheck(tt.setupExpiresAt, tt.setupCreatedAt)
+			if tt.expectedErr == nil {
+				require.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, tt.expectedErr)
+			}
+		})
+	}
+}
+
+func TestShouldRefresh(t *testing.T) {
+	tests := []struct {
+		name			string
+		setupExpiresAt  time.Time
+		setupCreatedAt  time.Time
+		expectedBool 	bool
+		expectedErr 	error
+	}{
+		{
+			name: "正常系：期限延長される必要なし",
+			setupExpiresAt: time.Now().Add(24*time.Hour).UTC(),
+        	setupCreatedAt: time.Now().Add(-48*time.Hour).UTC(),
+			expectedBool: false,
+			expectedErr: nil,
+		},
+		{
+			name: "正常系：期限延長される必要がある",
+        	setupExpiresAt: time.Now().Add(12*time.Hour).UTC(),
+        	setupCreatedAt: time.Now().Add(-24*6*time.Hour).UTC(),
+			expectedBool: true,
+			expectedErr: nil,
+		},
+		{
+			name: "異常系：パラメーター異常",
+        	setupExpiresAt: time.Now().Add(12*time.Hour).UTC(),
+        	setupCreatedAt: time.Now().Add(12*6*time.Hour).UTC(),
+			expectedBool: false,
+			expectedErr:  errcode.ErrSessionExpired,
+		},
+		{
+			name: "異常系：なし",
+			expectedBool: false,
+			expectedErr:  errcode.ErrRequiredFieldMissing,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ms := new(mockSessionRepository)
+			mt := new(mockTokenManager)
+			mu := new(mockUserService)
+
+			svc := NewSessionService(ms, mu, mt)
+
+			foundBool, err := svc.ShouldRefresh(tt.setupExpiresAt, tt.setupCreatedAt)
+
+			if tt.expectedErr != nil {
+				assert.ErrorIs(t, err, tt.expectedErr)
+			} else {
+				assert.Equal(t, tt.expectedBool, foundBool)
+			}
+
+		})
+	}
+}
+
+func TestExecuteRefresh(t *testing.T) {
 	initialExpiry := time.Now().Add(1 * time.Hour).UTC()
+	userID := 10
+	token := "sbjbabfhbanjkaflansflasbfabfb223ebfhb"
+	tokenHash := "valid_token_hash"
+	detailErr := fmt.Errorf("セッション取得後に返却されたオブジェクトが nil です")
 	sr := &dto.SessionRecord{
-		UserID:    10,
-		TokenHash: "valid_token_hash",
+		UserID:    int64(userID),
+		TokenHash: tokenHash,
 		ExpiresAt: initialExpiry,
+		CreatedAt: time.Now().Add(-72*time.Hour).UTC(),
 	}
 
 	tests := []struct {
-		name      string
-		setupMock func(ms *mockSessionRepository)
-		wantErr   bool
-		errMsg    string
-	}{
+		name      	string
+		setupuserID int64
+		setupToken 	string
+		setupMock 	func(ms *mockSessionRepository,mt *mockTokenManager)
+		expectErr  	error
+		errMsg    	string
+	} {
 		{
-			name: "セッション期限が正常に更新される",
-			setupMock: func(ms *mockSessionRepository) {
+			name: "正常系：セッション期限が正常に更新される",
+			setupuserID: 10,
+			setupToken: token,
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
+				mt.On("Hash", token).Return(tokenHash, nil)
+				ms.On("Get", mock.Anything, tokenHash).Return(sr, nil)
 				ms.On("Update", mock.Anything,mock.Anything).Return(nil)
 			},
-			wantErr: false,
 		},
 		{
-			name: "データベース更新エラー",
-			setupMock: func(ms *mockSessionRepository) {
-				ms.On("Update", mock.Anything, mock.Anything).
-					Return(errMockInternal)
+			name: "異常系：recordなし",
+			setupuserID: 100,
+			setupToken: token,
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
+				mt.On("Hash", token).Return(tokenHash, nil)
+				ms.On("Get", mock.Anything, tokenHash).Return(nil, detailErr)
 			},
-			wantErr: true,
+			expectErr: detailErr,
+			errMsg: "セッションの取得に失敗しました",
+		},
+		{
+			name: "異常系：データベース更新エラー",
+			setupuserID: 10,
+			setupToken: token,
+			setupMock: func(ms *mockSessionRepository,  mt *mockTokenManager) {
+				mt.On("Hash", token).Return(tokenHash, nil)
+				ms.On("Get", mock.Anything, tokenHash).Return(sr, nil)
+				ms.On("Update", mock.Anything, mock.Anything).Return(errMockInternal)
+			},
+			expectErr: errMockInternal,
 			errMsg:  "セッション期限の更新に失敗しました",
 		},
 	}
@@ -363,15 +469,19 @@ func TestRefreshSession(t *testing.T) {
 			mt := new(mockTokenManager)
 			mu := new(mockUserService)
 
-			tt.setupMock(ms)
+			tt.setupMock(ms, mt)
 			svc := NewSessionService(ms, mu, mt)
 
-			err := svc.refreshSession(context.Background(), sr)
+			err := svc.executeRefresh(context.Background(), tt.setupToken)
 			
 
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errMsg)
+			if tt.expectErr != nil {
+				if tt.errMsg != "" {
+					assert.Error(t, err)
+					assert.Contains(t, err.Error(), tt.errMsg)
+				} else {
+					assert.ErrorIs(t, err, tt.expectErr)
+				}
 			} else {
 				assert.NoError(t, err)
 				assert.True(t, sr.ExpiresAt.After(initialExpiry), "ExpiresAt が更新後の方が新しくなっているべき")
@@ -382,6 +492,85 @@ func TestRefreshSession(t *testing.T) {
 			ms.AssertExpectations(t)
 		})
 	}
+}
+
+func TestRefreshAsyncErrorHandling(t *testing.T) {
+    ms := new(mockSessionRepository)
+    mt := new(mockTokenManager)
+    mu := new(mockUserService)
+    
+    svc := NewSessionService(ms, mu, mt)
+
+    testToken := "valid-token-at-least-32-characters-long"
+    testHash := "mocked-hash"
+
+	mt.On("Hash", testToken).Return(testHash, nil)
+    ms.On("Get", mock.Anything, testHash).Return(nil, errMockInternal)
+
+    svc.RefreshAsync(testToken)
+
+    time.Sleep(50 * time.Millisecond)
+    ms.AssertExpectations(t)
+    mt.AssertExpectations(t)
+    
+    t.Log("Async task failed as expected, but service is still alive.")
+}
+
+func TestRefreshAsyncSuccess(t *testing.T) {
+    ms := new(mockSessionRepository)
+    mt := new(mockTokenManager)
+    mu := new(mockUserService)
+    svc := NewSessionService(ms, mu, mt)
+
+    testToken := "valid-token-at-least-32-characters-long"
+    testHash := "mocked-hash"
+    userID := int64(123)
+
+    mt.On("Hash", testToken).Return(testHash, nil)
+    ms.On("Get", mock.Anything, testHash).Return(&dto.SessionRecord{
+        UserID: userID,
+        TokenHash: testHash,
+        ExpiresAt: time.Now().Add(1 * time.Hour),
+        CreatedAt: time.Now().Add(-1 * time.Hour),
+    }, nil)
+
+    ms.On("Update", mock.Anything, mock.MatchedBy(func(r *dto.SessionRecord) bool {
+        return r.UserID == userID && r.ExpiresAt.After(time.Now())
+    })).Return(nil)
+
+    svc.RefreshAsync(testToken)
+
+    time.Sleep(50 * time.Millisecond)
+
+
+    ms.AssertExpectations(t)
+    mt.AssertExpectations(t)
+}
+
+func TestRefreshAsync_Isolation(t *testing.T) {
+    ms := new(mockSessionRepository)
+    mt := new(mockTokenManager)
+    mu := new(mockUserService)
+    svc := NewSessionService(ms, mu, mt)
+
+    mt.On("Hash", mock.Anything).Return("hash", nil)
+    ms.On("Get", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+        time.Sleep(200 * time.Millisecond) 
+    }).Return(&dto.SessionRecord{UserID: 123}, nil)
+    ms.On("Update", mock.Anything, mock.MatchedBy(func(r *dto.SessionRecord) bool {
+        return r.UserID == 123 && r.ExpiresAt.After(time.Now())})).Return(nil)
+
+    startTime := time.Now()
+
+    svc.RefreshAsync("token-at-least-32-characters-long-xxx")
+
+    duration := time.Since(startTime)
+    assert.Less(t, duration, 10*time.Millisecond, "メインプロセスがブロックされています。非同期の隔離に失敗しました。")
+
+    t.Logf("メインプロセスの実行時間: %v - 即時レスポンスを確認しました。", duration)
+
+    time.Sleep(500 * time.Millisecond)
+    ms.AssertExpectations(t)
 }
 
 func TestRevoke(t *testing.T) {

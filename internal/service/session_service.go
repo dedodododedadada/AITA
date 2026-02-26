@@ -6,6 +6,7 @@ import (
 	"aita/internal/models"
 	"context"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -39,7 +40,6 @@ func NewSessionService(sr SessionRepository, usvc UserInfoProvider, tm TokenMana
         tokenManager: tm,
     }
 } 
-
 func (s *sessionService) validateAndHash(token string) (string, error) {
     if token == ""  {
         return "", errcode.ErrSessionNotFound
@@ -50,35 +50,70 @@ func (s *sessionService) validateAndHash(token string) (string, error) {
     return s.tokenManager.Hash(token), nil
 }
 
-func(s *sessionService) IsExpired(sr *dto.SessionRecord) bool {
-    if sr == nil {
-        return true
+func(s *sessionService) expirationCheck(expiresAt time.Time, createdAt time.Time)  error {
+    if expiresAt.IsZero() || createdAt.IsZero() {
+        return errcode.ErrRequiredFieldMissing
     }
 
     now  := time.Now().UTC()
-    if now.After(sr.ExpiresAt.UTC()) {
-        return true
+    if now.After(expiresAt.UTC()) {
+        return errcode.ErrSessionExpired
     }
 
-    if now.After(sr.CreatedAt.UTC().Add(MaxSessionLife)) {
-        return true
+    if now.After(createdAt.UTC().Add(MaxSessionLife)) {
+        return errcode.ErrSessionExpired
     }
 
-    return false
+    return nil
 }
 
-func (s *sessionService) ShouldRefresh(sr *dto.SessionRecord) bool {
-    if sr == nil || s.IsExpired(sr) {
-        return false
+func (s *sessionService) authenticate(ctx context.Context, token string) (*dto.SessionRecord, error) {
+    tokenHash, err := s.validateAndHash(token)
+    if err != nil {
+        return nil, err
+    }
+    record, err := s.sessionRepository.Get(ctx, tokenHash)
+    if err != nil || record == nil {
+        return nil, fmt.Errorf("セッションの取得に失敗しました: %w", err)
     }
 
-    totalDuration := sr.ExpiresAt.UTC().Sub(sr.CreatedAt.UTC())
-    remaining := sr.ExpiresAt.UTC().Sub(time.Now().UTC())
-    if totalDuration <= 0 {
-        return true
+    err = s.expirationCheck(record.ExpiresAt, record.CreatedAt)
+    if err != nil {
+        return nil, err
     }
 
-    return remaining < totalDuration / 4
+    return record, nil
+}
+
+func (s *sessionService) executeRefresh(ctx context.Context, token string) error {
+    tokenHash, err := s.validateAndHash(token)
+    record, err := s.sessionRepository.Get(ctx, tokenHash)
+    if err != nil || record == nil {
+        return fmt.Errorf("セッションの取得に失敗しました: %w", err)
+    }
+
+    newExpiry := time.Now().Add(SessionDuration).UTC()
+    record.ExpiresAt = newExpiry
+    err = s.sessionRepository.Update(ctx, record)
+    if err != nil {
+        return fmt.Errorf("セッション期限の更新に失敗しました: %w", err)
+    }
+
+    return nil
+}
+
+func (s *sessionService) RefreshAsync(token string) {
+    go func() {
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+
+        defer func() {
+            if r := recover(); r != nil {
+                log.Printf("RefreshAsync panic: %v", r)
+            }
+        }()
+        _ = s.executeRefresh(ctx, token)
+    }()
 }
 
 func (s *sessionService) Issue(ctx context.Context, userID int64) (*dto.SessionResponse, error) {
@@ -94,7 +129,7 @@ func (s *sessionService) Issue(ctx context.Context, userID int64) (*dto.SessionR
     data := &dto.SessionRecord{
         UserID:    userID,
         TokenHash: s.tokenManager.Hash(token),
-        ExpiresAt: time.Now().Add(MaxSessionLife).UTC(), 
+        ExpiresAt: time.Now().Add(SessionDuration).UTC(), 
         CreatedAt: time.Now().UTC(),
     }
 
@@ -107,32 +142,6 @@ func (s *sessionService) Issue(ctx context.Context, userID int64) (*dto.SessionR
     return dto.ToSessionResponse(record, token), nil
 }
 
-func (s *sessionService) authenticate(ctx context.Context, token string) (*dto.SessionRecord, error) {
-    tokenHash, err := s.validateAndHash(token)
-    if err != nil {
-        return nil, err
-    }
-    record, err := s.sessionRepository.Get(ctx, tokenHash)
-    if err != nil || record == nil {
-        return nil, fmt.Errorf("セッションの取得に失敗しました: %w", err)
-    }
-
-    if s.IsExpired(record) {
-        return nil, errcode.ErrSessionExpired
-    }
-
-    return record, nil
-}
-// Validate verifies the token's validity and checks the user's status.
-//
-// NOTE: Architectural Decoupling in progress.
-// 1. [ ] REMOVE internal calls to ShouldRefresh and refreshSession.
-// 2. [ ] REASON: To follow the "Idempotency" principle. Validate should be a Read-Only operation.
-// 3. [ ] STRATEGY: Move async refresh logic to the Middleware/API layer to achieve 
-//    non-blocking Sliding Expiration and improve response latency.
-// 4. [ ] TESTING: This decoupling simplifies Unit Testing by removing the need to mock 
-//    database updates during simple validation checks.
-
 func (s *sessionService) Validate(ctx context.Context, token string) (*dto.SessionResponse, error) {
     record, err := s.authenticate(ctx, token)
     if err != nil {
@@ -143,32 +152,32 @@ func (s *sessionService) Validate(ctx context.Context, token string) (*dto.Sessi
         return nil, err
     }
 
-    if s.ShouldRefresh(record) {
-        if err := s.refreshSession(ctx, record); err != nil {
-            return nil, err 
-        }
-    }
+   
     return dto.ToSessionResponse(record, token), nil
 }
 
-func (s *sessionService) refreshSession(ctx context.Context, sr *dto.SessionRecord) error {
-    newExpiry := time.Now().Add(SessionDuration).UTC()
-    sr.ExpiresAt = newExpiry
-    err := s.sessionRepository.Update(ctx, sr)
+
+
+func (s *sessionService) ShouldRefresh(expiresAt time.Time, createdAt time.Time) (bool, error) {
+    err := s.expirationCheck(expiresAt, createdAt)
     if err != nil {
-        return fmt.Errorf("セッション期限の更新に失敗しました: %w", err)
+        return false, err
     }
 
-    return nil
+    totalDuration := expiresAt.UTC().Sub(createdAt.UTC())
+    remaining := expiresAt.UTC().Sub(time.Now().UTC())
+    if totalDuration <= 0 {
+        return false, errcode.ErrSessionExpired
+    }
+
+    return remaining < totalDuration / 4, nil
 }
 
-func (s *sessionService) Revoke(ctx context.Context, userID int64, token string) error {
-    if userID <= 0 {
-        return errcode.ErrRequiredFieldMissing
-    }
 
-    check, err := s.authenticate(ctx, token) 
-    if err != nil  {
+
+func (s *sessionService) Revoke(ctx context.Context, userID int64, token string) error {
+    check, err := s.authenticate(ctx, token)
+    if err != nil {
         return err
     }
     if check.UserID != userID {

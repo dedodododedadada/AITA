@@ -5,6 +5,7 @@ import (
 	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"context"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 )
@@ -49,6 +50,15 @@ func (m *mockSessionService)Revoke(ctx context.Context, userID int64, token stri
 func (m *mockSessionService) Validate(ctx context.Context, token string) (*dto.SessionResponse, error) {
 	args := m.Called(ctx, token)
 	return testutils.SafeGet[dto.SessionResponse](args, 0), args.Error(1)
+}
+
+func (m *mockSessionService) ShouldRefresh(expiresAt, createdAt time.Time) (bool, error) {
+	args := m.Called(expiresAt, createdAt)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockSessionService) RefreshAsync(token string) {
+	_ = m.Called(token)
 }
 
 func (m *mockTweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*models.Tweet, error) {

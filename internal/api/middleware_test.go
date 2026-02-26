@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -16,10 +17,21 @@ import (
 
 func TestAuthMiddleware(t *testing.T) {
     gin.SetMode(gin.TestMode)
-    resp123 := &dto.SessionResponse{UserID: 123, Token: "valid_token1"}
-    resp456 := &dto.SessionResponse{UserID: 456, Token: "valid_token6"}
-    Auth123 := &dto.AuthContext{UserID: 123, Token: "valid_token1"}
-    Auth456 := &dto.AuthContext{UserID: 456, Token: "valid_token6"}
+    fixedTime := time.Now()
+	validRespOne := &dto.SessionResponse{
+		UserID:    123,
+		Token:     "valid_token",
+		ExpiresAt: fixedTime.Add(13 * time.Hour),
+		CreatedAt: fixedTime.Add(-8 * time.Hour),
+	}
+    validRespTwo :=  &dto.SessionResponse{
+		UserID:    456,
+		Token:     "refresh_token",
+		ExpiresAt: fixedTime.Add(1 * time.Hour),
+		CreatedAt: fixedTime.Add(-72 *time.Hour),
+	}
+    AuthOne := &dto.AuthContext{UserID: validRespOne.UserID, Token: validRespOne.Token}
+    AuthTwo := &dto.AuthContext{UserID: validRespTwo.UserID, Token: validRespTwo.Token}
     tests := []struct {
         name            string
         authHeader      string
@@ -28,22 +40,36 @@ func TestAuthMiddleware(t *testing.T) {
         expectedAuth    *dto.AuthContext
     }{
         {
-            name:       "【成功】有効なBearerトークン",
+            name:       "【成功】有効なBearerトークン&通常認証（リフレッシュ不要）",
             authHeader: "Bearer valid_token",
             setupMock: func(m *mockSessionService) {
-                m.On("Validate", mock.Anything, "valid_token").Return(resp123, nil)
+                m.On("Validate", mock.Anything, "valid_token").Return(validRespOne, nil)
+                m.On("ShouldRefresh", validRespOne.ExpiresAt, validRespOne.CreatedAt).Return(false, nil)
+
             },
             expectedStatus:  http.StatusOK,
-            expectedAuth: Auth123,
+            expectedAuth: AuthOne,
         },
         {
-            name:       "【成功】大文字のBEARERでも認識される",
-            authHeader: "BEARER upper_token",
+            name:       "【成功】大文字のBEARERでも認識される&リフレッシュが必要な場合（非同期呼び出しを確認）",
+            authHeader: "BEARER refresh_token",
             setupMock: func(m *mockSessionService) {
-                m.On("Validate", mock.Anything, "upper_token").Return(resp456, nil)
+                m.On("Validate", mock.Anything, "refresh_token").Return(validRespTwo, nil)
+                 m.On("ShouldRefresh", validRespTwo.ExpiresAt, validRespTwo.CreatedAt).Return(true, nil)
+                m.On("RefreshAsync", "refresh_token").Return()
             },
             expectedStatus:  http.StatusOK,
-            expectedAuth: Auth456,
+            expectedAuth: AuthTwo,
+        },
+        {
+            name:       "【境界値】認証した後、セッションがなくなってしまった",
+            authHeader: "BEARER refresh_token",
+            setupMock: func(m *mockSessionService) {
+                m.On("Validate", mock.Anything, "refresh_token").Return(validRespTwo, nil)
+                 m.On("ShouldRefresh", validRespTwo.ExpiresAt, validRespTwo.CreatedAt).Return(false, errcode.ErrSessionNotFound)
+            },
+            expectedStatus: http.StatusOK,
+            expectedAuth: AuthTwo,
         },
         {
             name:            "【失败】ヘッダーが空 (Serviceは呼ばれない)",
