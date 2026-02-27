@@ -408,7 +408,8 @@ func TestShouldRefresh(t *testing.T) {
 }
 
 func TestExecuteRefresh(t *testing.T) {
-	initialExpiry := time.Now().Add(1 * time.Hour).UTC()
+	now := time.Now().UTC()
+	initialExpiry := now.Add(1 * time.Hour).UTC()
 	userID := 10
 	token := "sbjbabfhbanjkaflansflasbfabfb223ebfhb"
 	tokenHash := "valid_token_hash"
@@ -417,19 +418,26 @@ func TestExecuteRefresh(t *testing.T) {
 		UserID:    int64(userID),
 		TokenHash: tokenHash,
 		ExpiresAt: initialExpiry,
-		CreatedAt: time.Now().Add(-72*time.Hour).UTC(),
+		CreatedAt: now.Add(-72*time.Hour).UTC(),
 	}
 
+	srMax := &dto.SessionRecord{
+        UserID:    10,
+        TokenHash: tokenHash,
+        ExpiresAt: time.Now().Add(1 * time.Hour).UTC(),
+        CreatedAt: time.Now().Add(-MaxSessionLife).Add(1 * time.Hour).UTC(), 
+    }
 	tests := []struct {
 		name      	string
 		setupuserID int64
 		setupToken 	string
 		setupMock 	func(ms *mockSessionRepository,mt *mockTokenManager)
 		expectErr  	error
+		check       func(t *testing.T, sr *dto.SessionRecord)
 		errMsg    	string
 	} {
 		{
-			name: "正常系：セッション期限が正常に更新される",
+			name: "正常系：セッション期限が正常に更新される(newExpiry)",
 			setupuserID: 10,
 			setupToken: token,
 			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
@@ -437,6 +445,24 @@ func TestExecuteRefresh(t *testing.T) {
 				ms.On("Get", mock.Anything, tokenHash).Return(sr, nil)
 				ms.On("Update", mock.Anything,mock.Anything).Return(nil)
 			},
+			check: func(t *testing.T, sr *dto.SessionRecord) {
+           		expected := time.Now().Add(SessionDuration).UTC()
+            	assert.WithinDuration(t, expected, sr.ExpiresAt, 2*time.Second)
+       		 },
+		},
+		{
+			name: "正常系：セッション期限が正常に更新される(maxExpiry)",
+			setupuserID: 10,
+			setupToken: token,
+			setupMock: func(ms *mockSessionRepository, mt *mockTokenManager) {
+				mt.On("Hash", token).Return(tokenHash, nil)
+				ms.On("Get", mock.Anything, tokenHash).Return(srMax, nil)
+				ms.On("Update", mock.Anything,mock.Anything).Return(nil)
+			},
+			check: func(t *testing.T, sr *dto.SessionRecord) {
+            	expectedMax := sr.CreatedAt.Add(MaxSessionLife).UTC()
+            	assert.True(t, sr.ExpiresAt.Equal(expectedMax))
+        	},
 		},
 		{
 			name: "異常系：recordなし",
@@ -483,10 +509,11 @@ func TestExecuteRefresh(t *testing.T) {
 					assert.ErrorIs(t, err, tt.expectErr)
 				}
 			} else {
-				assert.NoError(t, err)
-				assert.True(t, sr.ExpiresAt.After(initialExpiry), "ExpiresAt が更新後の方が新しくなっているべき")
-				expectedExpiry := time.Now().Add(SessionDuration)
-				assert.WithinDuration(t, expectedExpiry, sr.ExpiresAt, 10*time.Second)
+				call := ms.Calls[len(ms.Calls)-1] 
+    			updatedSR := call.Arguments.Get(1).(*dto.SessionRecord)
+    			if tt.check != nil {
+       				 tt.check(t, updatedSR)
+    			}
 			}
 
 			ms.AssertExpectations(t)

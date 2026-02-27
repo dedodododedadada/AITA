@@ -93,6 +93,10 @@ func (s *sessionService) executeRefresh(ctx context.Context, token string) error
     }
 
     newExpiry := time.Now().Add(SessionDuration).UTC()
+    maxExpiry := record.CreatedAt.Add(MaxSessionLife).UTC()
+    if newExpiry.After(maxExpiry) {
+        newExpiry = maxExpiry 
+    }
     record.ExpiresAt = newExpiry
     err = s.sessionRepository.Update(ctx, record)
     if err != nil {
@@ -115,7 +119,7 @@ func (s *sessionService) RefreshAsync(token string) {
         _ = s.executeRefresh(ctx, token)
     }()
 }
-
+// wil add user validation by userrepo
 func (s *sessionService) Issue(ctx context.Context, userID int64) (*dto.SessionResponse, error) {
     if userID <= 0 {
         return nil, errcode.ErrRequiredFieldMissing
@@ -142,6 +146,7 @@ func (s *sessionService) Issue(ctx context.Context, userID int64) (*dto.SessionR
     return dto.ToSessionResponse(record, token), nil
 }
 
+// ToMyPage will be replaced by exist in userrepo
 func (s *sessionService) Validate(ctx context.Context, token string) (*dto.SessionResponse, error) {
     record, err := s.authenticate(ctx, token)
     if err != nil {

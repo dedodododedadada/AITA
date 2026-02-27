@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +28,8 @@ func TestCreate(t *testing.T) {
 	assert.Equal(t, initUser.Username, createdUser.Username, "ユーザー名は一致するべきです")
 	assert.Equal(t, initUser.Email, createdUser.Email, "メールは一致する必要があります")
 	assert.Equal(t, initUser.PasswordHash, createdUser.PasswordHash, "パスワードハッシュは空であるべきではありません")
+	assert.Zero(t, createdUser.FollowerCount)
+	assert.Zero(t, createdUser.FollowingCount)
 	assert.NotZero(t, createdUser.ID, "IDは自動生成されるべきです")
 	assert.NotZero(t, createdUser.CreatedAt, "CreatedAtは自動生成されるべきです")
 	assert.Equal(t, time.UTC, createdUser.CreatedAt.Location(), "CreatedAtはUTCであるべきです")
@@ -126,6 +127,8 @@ func TestGetByEmail(t *testing.T) {
 		assert.Equal(t, createdUser.Email, foundUser.Email, "見つかったメールアドレスが一致するはずです")
 		assert.Equal(t, createdUser.PasswordHash, foundUser.PasswordHash, "見つかったPasswordHashが一致するはずです")
 		assert.True(t, createdUser.CreatedAt.Equal(foundUser.CreatedAt), "CreatedAtは一致するべきです")
+		assert.Equal(t, createdUser.FollowerCount, foundUser.FollowerCount)
+		assert.Equal(t, createdUser.FollowingCount, foundUser.FollowingCount)
 	})
 }
 
@@ -182,6 +185,8 @@ func TestGetByID(t *testing.T) {
 	assert.Equal(t, createdUser.Email, foundUser.Email, "見つかったメールアドレスが一致するべきです")
 	assert.Equal(t, createdUser.PasswordHash, foundUser.PasswordHash, "見つかったPasswordHashが一致するべきです")
 	assert.True(t, createdUser.CreatedAt.Equal(foundUser.CreatedAt), "CreatedAtは一致するべきです")
+	assert.Equal(t, createdUser.FollowerCount, foundUser.FollowerCount)
+	assert.Equal(t, createdUser.FollowingCount, foundUser.FollowingCount)
 }
 
 func TestGetByIDWhlieError(t *testing.T) {
@@ -213,5 +218,231 @@ func TestGetByIDWhlieError(t *testing.T) {
 		assert.Contains(t, err.Error(), "IDによるユーザー取得に失敗しました")
 		t.Logf("エラーは: %v\n", err)
 		assert.Nil(t, unfoundUser)
+	})
+}
+
+func TestIncreFollowerCount(t *testing.T) {
+    testContext.CleanupTestDB()
+    defer testContext.CleanupTestDB()
+    ctx := context.Background()
+    
+    initUser := &models.User{
+        Username:     "follower_test_user",
+        Email:        "follower@example.com",
+        PasswordHash: "passwordHash",
+    }
+    createdUser, err := testUserStore.Create(ctx, initUser)
+    require.NoError(t, err)
+
+
+    t.Run("正常系：フォロワー数のインクリメント成功", func(t *testing.T) {
+        tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+        require.NoError(t, err)
+        
+        delta := int64(1)
+        err = testUserStore.IncreaseFollowerCount(ctx, tx, createdUser.ID, delta)
+        require.NoError(t, err)
+        
+        err = tx.Commit()
+		defer tx.Rollback()
+        require.NoError(t, err)
+        
+        updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+        require.NoError(t, err)
+        assert.Equal(t, int64(1), updatedUser.FollowerCount)
+    })
+
+    t.Run("正常系：フォロワー数のデクリメント成功", func(t *testing.T) {
+        tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+        require.NoError(t, err)
+        
+        delta := int64(-1)
+        err = testUserStore.IncreaseFollowerCount(ctx, tx, createdUser.ID, delta)
+        require.NoError(t, err)
+        
+        err = tx.Commit()
+        require.NoError(t, err)
+        
+        updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+        require.NoError(t, err)
+        assert.Equal(t, int64(0), updatedUser.FollowerCount)
+    })
+
+    t.Run("正常系：負の更新による下限値（0）の維持検証", func(t *testing.T) {
+        tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+        require.NoError(t, err)
+        
+        delta := int64(-100)
+        err = testUserStore.IncreaseFollowerCount(ctx, tx, createdUser.ID, delta)
+        require.NoError(t, err)
+        
+        err = tx.Commit()
+        require.NoError(t, err)
+
+        updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+        require.NoError(t, err)
+        assert.Equal(t, int64(0), updatedUser.FollowerCount)
+    })
+}
+func TestIncreFollowerCountWhileErr(t *testing.T) {
+    testContext.CleanupTestDB()
+    defer testContext.CleanupTestDB()
+    ctx := context.Background()
+    
+    initUser := &models.User{
+        Username:     "follower_err_user",
+        Email:        "follower_err@example.com",
+        PasswordHash: "passwordHash",
+    }
+    createdUser, err := testUserStore.Create(ctx, initUser)
+    require.NoError(t, err)
+
+    t.Run("異常系：存在しないユーザーID", func(t *testing.T) {
+        tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback() 
+        require.NoError(t, err)
+
+        nonExistentID := int64(99999)
+        err = testUserStore.IncreaseFollowerCount(ctx, tx, nonExistentID, 1)
+        
+        assert.ErrorIs(t, err, errcode.ErrUserNotFound)
+    })
+
+    t.Run("異常系：ロールバックでデータが戻ること", func(t *testing.T) {
+        tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+        require.NoError(t, err)
+        
+        err = testUserStore.IncreaseFollowerCount(ctx, tx, createdUser.ID, 50)
+        require.NoError(t, err)
+        err = tx.Rollback()
+        require.NoError(t, err)
+        
+        finalUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+        require.NoError(t, err)
+        assert.Equal(t, int64(0), finalUser.FollowerCount)
+    })
+
+    t.Run("異常系：DB切断時のラップされたエラー", func(t *testing.T) {
+        tempDB, err := testutils.OpenDB(testContext.DSN)
+        require.NoError(t, err)
+        tempUserStore := NewPostgresUserStore(tempDB)
+        tempDB.Close()
+
+        err = tempUserStore.IncreaseFollowerCount(ctx, nil, createdUser.ID, 1)
+        
+        require.Error(t, err)
+        assert.Contains(t, err.Error(), "follower countsの更新に失敗しました")
+    })
+}
+
+func TestIncreFollowingCount(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username:     "testuser_for_id",
+		Email:        "getid@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	t.Run("正常系：更新成功(follow)",func(t *testing.T) {
+		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+    	require.NoError(t, err)
+		delta := int64(1)
+		err = testUserStore.IncreaseFollowingCount(ctx,tx, createdUser.ID, delta)
+		
+		require.NoError(t, err)
+		err = tx.Commit()
+		require.NoError(t,err)
+		updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+    	require.NoError(t, err)
+    	assert.Equal(t, int64(1), updatedUser.FollowingCount)
+	})
+	t.Run("正常系：更新成功(UnFollow)",func(t *testing.T) {
+		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+    	require.NoError(t, err)
+		delta := int64(-1)
+		err = testUserStore.IncreaseFollowingCount(ctx,tx, createdUser.ID, delta)
+		
+		require.NoError(t, err)
+		err = tx.Commit()
+		require.NoError(t,err)
+		updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+    	require.NoError(t, err)
+    	assert.Equal(t, int64(0), updatedUser.FollowingCount)
+	})
+
+	t.Run("正常系：負の更新による0下限の維持", func(t *testing.T) {
+		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+    	require.NoError(t, err)
+		delta := int64(1)
+		err = testUserStore.IncreaseFollowingCount(ctx,tx, createdUser.ID, delta)
+		require.NoError(t, err)
+		
+		delta = int64(-9)
+		err = testUserStore.IncreaseFollowingCount(ctx, tx, createdUser.ID, delta)
+		err = tx.Commit()
+		assert.NoError(t, err)
+		updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+    	require.NoError(t, err)
+    	assert.Equal(t, int64(0), updatedUser.FollowingCount)
+	})
+}
+
+func TestIncreFollowingCountWhileErr(t *testing.T) {
+	testContext.CleanupTestDB()
+	defer testContext.CleanupTestDB()
+	ctx := context.Background()
+	
+	initUser := &models.User{
+		Username:     "testuser_for_id",
+		Email:        "getid@example.com",
+		PasswordHash: "passwordHash",
+	}
+	createdUser, err := testUserStore.Create(ctx, initUser)
+	require.NoError(t, err)
+
+	t.Run("異常系：userなし",func(t *testing.T) {
+		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+    	require.NoError(t, err)
+		delta := int64(1)
+		err = testUserStore.IncreaseFollowingCount(ctx,tx, int64(101), delta)
+		
+		assert.ErrorIs(t, err, errcode.ErrUserNotFound)
+	})
+
+	t.Run("異常系：ロールバックでデータが戻ること", func(t *testing.T) {
+		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+		require.NoError(t, err)
+		err = testUserStore.IncreaseFollowingCount(ctx, tx, createdUser.ID, 5)
+		require.NoError(t, err)
+
+		err = tx.Rollback()
+		require.NoError(t, err)
+		finalUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), finalUser.FollowerCount)
+	})
+
+	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
+		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempUserStore := NewPostgresUserStore(tempDB)
+
+		tempDB.Close()
+		err = tempUserStore.IncreaseFollowerCount(ctx, nil, createdUser.ID, 5)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "follower countsの更新に失敗しました")
+		t.Logf("エラーは: %v\n", err)
 	})
 }

@@ -48,15 +48,24 @@ func (s *redisSessionStore) Create(ctx context.Context, session *models.Session)
 	}
 	pipe := s.client.Pipeline()
 
-	pipe.Set(ctx, dKey, data, ttl)
+	setCmd := pipe.SetArgs(ctx, dKey, data, redis.SetArgs{Mode: "NX", TTL: ttl})
 	pipe.SAdd(ctx, hKey, session.TokenHash)
 	pipe.Expire(ctx, hKey, ttl+24*time.Hour)
 
 	_, err = pipe.Exec(ctx)
 
-	if err != nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("Redisへのセッション保存に失敗しました: %w", err)
 	}
+
+	if err := setCmd.Err(); err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, errcode.ErrTokenConflict
+		}
+
+		return nil, fmt.Errorf("Redisへのセッション保存に失敗しました: %w", err)
+	}
+
 
 	return session, nil
 }
@@ -103,15 +112,23 @@ func (s *redisSessionStore) Update(ctx context.Context, session *models.Session)
 
 	pipe := s.client.Pipeline()
 
-	pipe.Set(ctx, dKey, data, ttl)
+	setCmd := pipe.SetArgs(ctx, dKey, data, redis.SetArgs{Mode: "XX", Get: false, ExpireAt: session.ExpiresAt})
 	pipe.SAdd(ctx, hKey, session.TokenHash)
 	pipe.Expire(ctx, hKey, ttl+24*time.Hour)
 
 	_, err = pipe.Exec(ctx)
-
-	if err != nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("Redisへのセッション更新に失敗しました: %w", err)
 	}
+
+
+	if err := setCmd.Err(); err != nil  {
+		if errors.Is(err, redis.Nil) {
+			return errcode.ErrSessionNotFound
+		}
+		return fmt.Errorf("Redisへのセッション更新に失敗しました: %w", err)
+	}
+
 	return nil
 }
 
@@ -121,17 +138,27 @@ func (s *redisSessionStore) Delete(ctx context.Context, session *models.Session)
 
     pipe := s.client.Pipeline()
 
-    pipe.Del(ctx, dKey)
+    delCmd := pipe.Unlink(ctx, dKey)
     pipe.SRem(ctx, uKey, session.TokenHash)
 
     _, err := pipe.Exec(ctx)
+	
     if err != nil {
         return fmt.Errorf("セッションの完全削除に失敗しました: %w", err)
     }
+    
+	count, err := delCmd.Result()
+	if err != nil {
+		return fmt.Errorf("セッションの完全削除に失敗しました: %w", err)
+	}
+
+	if count == 0 {
+		return errcode.ErrSessionNotFound
+	}
 
 	return nil
 }
-
+// wil be replaced by redis stream
 func (s *redisSessionStore) DeleteByUserID(ctx context.Context, userID int64) error {
     uKey := s.hashKey(userID)
 
