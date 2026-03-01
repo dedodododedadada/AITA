@@ -12,11 +12,15 @@ import (
 )
 
 type postgresFollowStore struct {
-	database *sqlx.DB
+	BaseStore
 }
 
 func NewPostgresFollowStore(db *sqlx.DB) *postgresFollowStore {
-	return &postgresFollowStore{database: db}
+	return &postgresFollowStore{
+		BaseStore: BaseStore{
+			database: db,
+		},
+	}
 }
 
 func (s *postgresFollowStore)Create(ctx context.Context, follow *models.Follow) (*models.Follow, error) {
@@ -24,7 +28,7 @@ func (s *postgresFollowStore)Create(ctx context.Context, follow *models.Follow) 
 			  VALUES($1, $2)
 			  RETURNING id, follower_id, following_id, created_at`
 	var newFollow models.Follow
-	err := s.database.QueryRowContext(
+	err := s.BaseStore.conn(ctx).QueryRowContext(
 		ctx, 
 		query,
 		follow.FollowerID,
@@ -56,27 +60,49 @@ func (s *postgresFollowStore)Create(ctx context.Context, follow *models.Follow) 
 		return nil,  fmt.Errorf("フォローの生成に失敗しました: %w", err)
 	}
 
+	newFollow.CreatedAt = newFollow.CreatedAt.UTC()
 	return &newFollow, nil
 }
 
 
 func (s *postgresFollowStore) GetFollowings(ctx context.Context, followerID int64) ([]*models.Follow, error) {
 	followings := []*models.Follow{}
-	query := `SELECT id, follower_id, following_id, created_at FROM follows WHERE follower_id = $1`
-	err := s.database.SelectContext(ctx, &followings, query, followerID)
+	query := `
+		SELECT id, follower_id, following_id, created_at 
+		FROM follows 
+		WHERE follower_id = $1
+		ORDER BY created_at DESC, id DESC
+	`
+	
+	err := s.BaseStore.conn(ctx).SelectContext(ctx, &followings, query, followerID)
 	if err != nil {
 		return nil, fmt.Errorf("フォロー中リストの取得に失敗しました: %w", err)
 	}
+	
+	for i := range followings {
+        followings[i].CreatedAt = followings[i].CreatedAt.UTC()
+    }
 	return followings, nil
+
 }
 
 func (s *postgresFollowStore) GetFollowers(ctx context.Context, followingID int64) ([]*models.Follow, error) {
 	followers := []*models.Follow{}
-	query := `SELECT id, follower_id, following_id, created_at FROM follows WHERE following_id = $1`
+	query := `
+		SELECT id, follower_id, following_id, created_at 
+		FROM follows 
+		WHERE following_id = $1
+		ORDER BY created_at DESC, id DESC
+	`
+
 	err := s.database.SelectContext(ctx, &followers, query, followingID)
 	if err != nil {
 		return nil, fmt.Errorf("フォロワーリストの取得に失敗しました: %w", err)
 	}
+
+	for i := range followers {
+        followers[i].CreatedAt = followers[i].CreatedAt.UTC()
+    }
 	return followers, nil
 }
 

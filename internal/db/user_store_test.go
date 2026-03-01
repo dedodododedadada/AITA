@@ -240,10 +240,10 @@ func TestIncreFollowerCount(t *testing.T) {
        	tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
 		require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
 		
+		txCtx := injectTx(ctx, tx)
 		delta := int64(1)
-        err = testUserStore.IncreaseFollowerCount(ctx, createdUser.ID, delta)
+        err = testUserStore.IncreaseFollowerCount(txCtx, createdUser.ID, delta)
         require.NoError(t, err)
         
         err = tx.Commit()
@@ -258,10 +258,10 @@ func TestIncreFollowerCount(t *testing.T) {
         tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
         require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
         
+		txCtx := injectTx(ctx, tx)
         delta := int64(-1)
-        err = testUserStore.IncreaseFollowerCount(ctx, createdUser.ID, delta)
+        err = testUserStore.IncreaseFollowerCount(txCtx, createdUser.ID, delta)
         require.NoError(t, err)
         
         err = tx.Commit()
@@ -276,10 +276,10 @@ func TestIncreFollowerCount(t *testing.T) {
         tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
         require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
         
+		txCtx := injectTx(ctx, tx)
         delta := int64(-100)
-        err = testUserStore.IncreaseFollowerCount(ctx, createdUser.ID, delta)
+        err = testUserStore.IncreaseFollowerCount(txCtx, createdUser.ID, delta)
         require.NoError(t, err)
         
         err = tx.Commit()
@@ -307,7 +307,6 @@ func TestIncreFollowerCountWhileErr(t *testing.T) {
         tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback() 
         require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
 
         nonExistentID := int64(99999)
         err = testUserStore.IncreaseFollowerCount(ctx, nonExistentID, 1)
@@ -319,9 +318,9 @@ func TestIncreFollowerCountWhileErr(t *testing.T) {
         tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
         require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
-        
-        err = testUserStore.IncreaseFollowerCount(ctx, createdUser.ID, 50)
+
+        txCtx := injectTx(ctx, tx)
+        err = testUserStore.IncreaseFollowerCount(txCtx, createdUser.ID, 50)
         require.NoError(t, err)
         err = tx.Rollback()
         require.NoError(t, err)
@@ -361,10 +360,10 @@ func TestIncreFollowingCount(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
     	require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
-		
+		txCtx := injectTx(ctx, tx)
+
 		delta := int64(1)
-		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, delta)
+		err = testUserStore.IncreaseFollowingCount(txCtx, createdUser.ID, delta)
 		
 		require.NoError(t, err)
 		err = tx.Commit()
@@ -377,10 +376,10 @@ func TestIncreFollowingCount(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
     	require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
 
+		txCtx := injectTx(ctx, tx)
 		delta := int64(-1)
-		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, delta)
+		err = testUserStore.IncreaseFollowingCount(txCtx, createdUser.ID, delta)
 		
 		require.NoError(t, err)
 		err = tx.Commit()
@@ -394,16 +393,17 @@ func TestIncreFollowingCount(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
     	require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
 
+		txCtx := injectTx(ctx, tx)
 		delta := int64(1)
-		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, delta)
+		err = testUserStore.IncreaseFollowingCount(txCtx, createdUser.ID, delta)
 		require.NoError(t, err)
 		
 		delta = int64(-9)
-		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, delta)
-		err = tx.Commit()
+		err = testUserStore.IncreaseFollowingCount(txCtx, createdUser.ID, delta)
 		assert.NoError(t, err)
+		err = tx.Commit()
+		require.NoError(t, err)
 		updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
     	require.NoError(t, err)
     	assert.Equal(t, int64(0), updatedUser.FollowingCount)
@@ -427,21 +427,22 @@ func TestIncreFollowingCountWhileErr(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
     	require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
-
+		txCtx := injectTx(ctx, tx)
 		delta := int64(1)
-		err = testUserStore.IncreaseFollowingCount(ctx, int64(101), delta)
-		
+		err = testUserStore.IncreaseFollowingCount(txCtx, int64(101), delta)
 		assert.ErrorIs(t, err, errcode.ErrUserNotFound)
+		err = tx.Commit()
+		
+		
 	})
 
 	t.Run("異常系：ロールバックでデータが戻ること", func(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
 		require.NoError(t, err)
-		ctx = injectTx(ctx, tx)
+		txCtx := injectTx(ctx, tx)
 
-		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, 5)
+		err = testUserStore.IncreaseFollowingCount(txCtx, createdUser.ID, 5)
 		require.NoError(t, err)
 
 		err = tx.Rollback()

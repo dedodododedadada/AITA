@@ -60,8 +60,8 @@ func(r *userRepository) Create(ctx context.Context, record *dto.UserRecord) ( *d
 
 func(r *userRepository) GetByEmail(ctx context.Context, email string) (*dto.UserRecord, error) {
 	sfkey := fmt.Sprintf("users:%s", email)
-	res, err := utils.GetDataWithSF(ctx, r.sfFollow, sfkey, func() (*models.User, error) {
-		return r.userStore.GetByEmail(context.Background(), email)
+	res, err := utils.GetDataWithSF(ctx, r.sfFollow, sfkey, func(c context.Context) (*models.User, error) {
+		return r.userStore.GetByEmail(ctx, email)
 	})
 
 	if err != nil {
@@ -83,8 +83,8 @@ func(r *userRepository) GetByID(ctx context.Context, userID int64) (*dto.UserRec
 
 	sfKey := fmt.Sprintf("users:%d", userID)
 
-	user, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func() (*models.User, error) {
-		return r.userStore.GetByID(context.Background(), userID)
+	user, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) (*models.User, error) {
+		return r.userStore.GetByID(ctx, userID)
 	})
 
 	if err != nil {
@@ -149,8 +149,8 @@ func (r *userRepository) Exists(ctx context.Context, id int64) (bool, error) {
     }
 
     sfKey := fmt.Sprintf("exists:%d", id)
-    exists, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func() (bool, error) {
-        _, dbErr := r.userStore.GetByID(context.Background(), id)
+    exists, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) (bool, error) {
+        _, dbErr := r.userStore.GetByID(ctx, id)
         if dbErr != nil {
             if errors.Is(dbErr, errcode.ErrUserNotFound) {
                 return false, nil

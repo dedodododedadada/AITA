@@ -29,14 +29,15 @@ func (c *redisFollowCache) followerKey(userID int64) string {
 	return fmt.Sprintf("%sfollower:%d", c.prefix, userID)
 }
 
-func (c *redisFollowCache) Add(ctx context.Context, followerID, followingID int64) error {
+func (c *redisFollowCache) Add(ctx context.Context, followerID, followingID int64, created_at time.Time) error {
     keyFollowing := c.followingKey(followerID)
 	keyFollower := c.followerKey(followingID)
 	
+	createdTime := float64(created_at.UTC().Unix())
 	pipe := c.client.Pipeline()
     
-	pipe.SAdd(ctx, keyFollowing, followingID)
-    pipe.SAdd(ctx, keyFollower, followerID)
+	pipe.ZAdd(ctx, keyFollowing, redis.Z{Score: createdTime,Member: followingID})
+    pipe.ZAdd(ctx, keyFollower, redis.Z{Score: createdTime, Member: followerID})
     
 	expiration := utils.GetRandomExpiration(24*time.Hour, 1*time.Hour)
     pipe.Expire(ctx, keyFollowing , expiration)
@@ -107,13 +108,13 @@ func (c *redisFollowCache) GetRelation(ctx context.Context, followerID, followin
 
 func (c *redisFollowCache) GetFollowingIDs(ctx context.Context, userID int64) ([]int64, error) {
 	key := c.followingKey(userID)
-	return c.getIDsFromSet(ctx, key)
+	return c.getIDsFromZSet(ctx, key)
 }
 func (c *redisFollowCache) GetFollowerIDs(ctx context.Context, userID int64) ([]int64, error) {
 	key := c.followerKey(userID)
-	return c.getIDsFromSet(ctx, key)
+	return c.getIDsFromZSet(ctx, key)
 }
-func (c *redisFollowCache) getIDsFromSet(ctx context.Context, key string) ([]int64, error) {
+func (c *redisFollowCache) getIDsFromZSet(ctx context.Context, key string) ([]int64, error) {
 	strs, err := c.client.SMembers(ctx, key).Result()
 	if err != nil {
 		return nil, err

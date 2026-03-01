@@ -98,7 +98,7 @@ func(r *followRepository) CheckRelation(ctx context.Context, followerID, followi
 
 	sfKey := fmt.Sprintf("rel:%d:%d", low, high)
 
-	res, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func() (*models.RelationShip, error) {
+	res, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) (*models.RelationShip, error) {
 		return r.followStore.GetRelationship(context.Background(), followerID, followingID)
 	})
 
@@ -117,7 +117,7 @@ func(r *followRepository) GetFollowings(ctx context.Context, userID int64) ([]in
 
 	sfKey := fmt.Sprintf("followings:%d", userID)
 
-	followings, dberr := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func() ([]*models.Follow, error) {
+	followings, dberr := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) ([]*models.Follow, error) {
 		return r.followStore.GetFollowings(context.Background(), userID)
 	})
 
@@ -145,7 +145,7 @@ func(r *followRepository) GetFollowers(ctx context.Context, userID int64) ([]int
 
 	sfKey := fmt.Sprintf("followers:%d", userID)
 
-	followers, dberr := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func() ([]*models.Follow, error) {
+	followers, dberr := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) ([]*models.Follow, error) {
 		return r.followStore.GetFollowers(context.Background(), userID)
 	})
 
