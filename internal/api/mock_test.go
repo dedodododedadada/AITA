@@ -22,19 +22,19 @@ type mockTweetService struct {
 	mock.Mock
 }
 
-func (m *mockUserService) Register(ctx context.Context, username string, email string, password string) (*models.User, error)  {
+func (m *mockUserService) Register(ctx context.Context, username string, email string, password string) (*dto.UserRecord, error)  {
 	args := m.Called(ctx, username, email, password)
-	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.UserRecord](args, 0), args.Error(1)
 }
 
-func (m *mockUserService) Login(ctx context.Context, email, password string) (*models.User, error) {
+func (m *mockUserService) Login(ctx context.Context, email, password string) (*dto.UserRecord, error) {
 	args := m.Called(ctx, email, password)
-	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.UserRecord](args, 0), args.Error(1)
 }
 
-func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*models.User, error) {
+func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*dto.UserRecord, error) {
 	args := m.Called(ctx, userID)
-	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.UserRecord](args, 0), args.Error(1)
 }
 
 func (m *mockSessionService)Issue(ctx context.Context, userID int64) (*dto.SessionResponse, error) {

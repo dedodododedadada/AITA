@@ -4,7 +4,6 @@ import (
 	"aita/internal/contextkeys"
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"aita/internal/pkg/app"
 	"bytes"
 	"encoding/json"
@@ -36,7 +35,7 @@ func TestSignUp(t *testing.T) {
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				user := &models.User{
+				record := &dto.UserRecord{
 					ID:           1,
 					Username:     "mock_User",
 					Email:        "taro@example.com",
@@ -44,7 +43,7 @@ func TestSignUp(t *testing.T) {
 					CreatedAt:    time.Now().UTC(),
 				}
 				sessionResp := &dto.SessionResponse{
-					UserID: user.ID,
+					UserID: record.ID,
 					Token: "valid_token_string",
 				}
 				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
@@ -53,8 +52,8 @@ func TestSignUp(t *testing.T) {
 					return email == "taro@example.com"
 				}), mock.MatchedBy(func(password string) bool {
 					return password == "password123"
-				})).Return(user, nil)
-				ms.On("Issue", mock.Anything, user.ID).Return(sessionResp, nil)
+				})).Return(record, nil)
+				ms.On("Issue", mock.Anything, record.ID).Return(sessionResp, nil)
 			},
 			expectedStatus: http.StatusCreated,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -104,7 +103,7 @@ func TestSignUp(t *testing.T) {
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				user := &models.User{
+				record := &dto.UserRecord{
 					ID:           50,
 					Username:     "error_user",
 					Email:        "issue_fail@test.com",
@@ -117,7 +116,7 @@ func TestSignUp(t *testing.T) {
 					return email == "issue_fail@test.com"
 				}), mock.MatchedBy(func(password string) bool {
 					return password == "password123"
-				})).Return(user, nil)
+				})).Return(record, nil)
 				ms.On("Issue", mock.Anything, int64(50)).Return(nil, errors.New("redis connection failed"))
 			},
 			expectedStatus: http.StatusInternalServerError,
@@ -172,7 +171,7 @@ func TestLogin(t *testing.T) {
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				user := &models.User{ID: 1, Email: "test@example.com"}
+				user := &dto.UserRecord{ID: 1, Email: "test@example.com"}
 				sessionResp := &dto.SessionResponse{
 					UserID: user.ID,
 					Token: "valid_token_string",
@@ -223,7 +222,7 @@ func TestLogin(t *testing.T) {
 				Password: "password123",
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
-				user := &models.User{ID: 1, Email: "test@example.com"}
+				user := &dto.UserRecord{ID: 1, Email: "test@example.com"}
 				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
 				ms.On("Issue", mock.Anything, user.ID).Return(nil, errors.New("internal server error"))
 			},
@@ -278,7 +277,7 @@ func TestGetMe(t *testing.T) {
 				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 101,Token: "Valid_token"})
 			},
 			setupMock: func(mu *mockUserService) {
-				user := &models.User{ID: 101, Username: "test_user", Email: "test@example.com"}
+				user := &dto.UserRecord{ID: 101, Username: "test_user", Email: "test@example.com", FollowerCount: 10, FollowingCount: 20}
 				mu.On("ToMyPage", mock.Anything, int64(101)).Return(user, nil)
 			},
 			expectedStatus: http.StatusOK,
@@ -288,6 +287,8 @@ func TestGetMe(t *testing.T) {
 				data := resp.Data.(map[string]any)
 				assert.Equal(t, "test_user", data["username"])
 				assert.EqualValues(t, 101, data["id"])
+				assert.EqualValues(t, 10, data["follower_count"])
+				assert.EqualValues(t, 20, data["following_count"])
 			},
 		},
 		{

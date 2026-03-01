@@ -3,7 +3,6 @@ package service
 import (
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"context"
 	"fmt"
 	"log"
@@ -18,7 +17,7 @@ type SessionRepository interface {
 }
 
 type UserInfoProvider interface {
-    ToMyPage(ctx context.Context, userID int64) (*models.User, error)
+    Exists(ctx context.Context, userID int64) (bool, error)
 }
 
 type TokenManager interface {
@@ -119,7 +118,7 @@ func (s *sessionService) RefreshAsync(token string) {
         _ = s.executeRefresh(ctx, token)
     }()
 }
-// wil add user validation by userrepo
+
 func (s *sessionService) Issue(ctx context.Context, userID int64) (*dto.SessionResponse, error) {
     if userID <= 0 {
         return nil, errcode.ErrRequiredFieldMissing
@@ -146,17 +145,20 @@ func (s *sessionService) Issue(ctx context.Context, userID int64) (*dto.SessionR
     return dto.ToSessionResponse(record, token), nil
 }
 
-// ToMyPage will be replaced by exist in userrepo
 func (s *sessionService) Validate(ctx context.Context, token string) (*dto.SessionResponse, error) {
     record, err := s.authenticate(ctx, token)
     if err != nil {
         return nil, err
     }
-
-    if _, err := s.userService.ToMyPage(ctx, record.UserID); err != nil {
+    res, err := s.userService.Exists(ctx, record.UserID)
+    
+    if err != nil {
         return nil, err
     }
 
+    if !res {
+        return nil, errcode.ErrUserNotFound
+    }
    
     return dto.ToSessionResponse(record, token), nil
 }

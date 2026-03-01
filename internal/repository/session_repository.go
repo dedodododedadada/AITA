@@ -5,8 +5,6 @@ import (
 	"aita/internal/errcode"
 	"aita/internal/models"
 	"context"
-	"fmt"
-	"log"
 )
 
 type SessionStore interface {
@@ -50,9 +48,7 @@ func (r *sessionRepository) Get(ctx context.Context, tokenHash string) (*dto.Ses
 	}
 
 	if session == nil {
-		detailErr := fmt.Errorf("セッション取得後に返却されたオブジェクトが nil です")
-    	log.Printf("[CRITICAL] %v", detailErr)
-		return nil, detailErr
+		return nil, errcode.ErrInternal
 	}
 
 	return dto.ToSessionRecord(session), nil

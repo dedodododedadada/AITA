@@ -31,20 +31,20 @@ type FollowCache interface {
 	InvalidatePair(ctx context.Context, followerID, followingID int64) error
 	InvalidateSelf(ctx context.Context, userID int64) error
 }
-type FollowRepository struct {
+type followRepository struct {
 	followStore FollowStore
 	followCache FollowCache
 	sfFollow    *singleflight.Group
 }
 
-func NewFollowRepository(fs FollowStore, fc FollowCache) *FollowRepository {
-	return &FollowRepository{
+func NewFollowRepository(fs FollowStore, fc FollowCache) *followRepository {
+	return &followRepository{
 		followStore: fs,
 		followCache: fc,
 	}
 }
 
-func (r *FollowRepository) Create(ctx context.Context, followerID, followingID int64) (*dto.FollowRecord, error) {
+func (r *followRepository) Create(ctx context.Context, followerID, followingID int64) (*dto.FollowRecord, error) {
 	if followerID == followingID {
 		return nil, errcode.ErrCannotFollowSelf
 	}
@@ -70,7 +70,7 @@ func (r *FollowRepository) Create(ctx context.Context, followerID, followingID i
 	return dto.NewFollowRecord(dbFollow), nil
 }	
 
-func(r *FollowRepository) CheckRelation(ctx context.Context, followerID, followingID int64) (*dto.RelationRecord, error) {
+func(r *followRepository) CheckRelation(ctx context.Context, followerID, followingID int64) (*dto.RelationRecord, error) {
 	if followerID == followingID {
 		return &dto.RelationRecord{}, nil
 	}
@@ -108,7 +108,7 @@ func(r *FollowRepository) CheckRelation(ctx context.Context, followerID, followi
 	return dto.NewRelationRecord(res), nil
 }
 
-func(r *FollowRepository) GetFollowings(ctx context.Context, userID int64) ([]int64, error) {
+func(r *followRepository) GetFollowings(ctx context.Context, userID int64) ([]int64, error) {
 	list, err := r.followCache.GetFollowingIDs(ctx, userID)
     if err == nil && len(list) > 0 {
         return list, nil
@@ -136,7 +136,7 @@ func(r *FollowRepository) GetFollowings(ctx context.Context, userID int64) ([]in
 	return ids, nil
 }
 
-func(r *FollowRepository) GetFollowers(ctx context.Context, userID int64) ([]int64, error) {
+func(r *followRepository) GetFollowers(ctx context.Context, userID int64) ([]int64, error) {
 	list, err := r.followCache.GetFollowerIDs(ctx, userID)
     if err == nil && len(list) > 0 {
         return list, nil
@@ -166,7 +166,7 @@ func(r *FollowRepository) GetFollowers(ctx context.Context, userID int64) ([]int
 
 
 
-func (r *FollowRepository) RemoveFollow(ctx context.Context, followerID, followingID int64) error {
+func (r *followRepository) RemoveFollow(ctx context.Context, followerID, followingID int64) error {
 	if (followerID == followingID) {
 		return nil
 	}

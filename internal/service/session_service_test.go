@@ -3,7 +3,6 @@ package service
 import (
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"context"
 	"fmt"
 	"strings"
@@ -249,7 +248,7 @@ func TestValidate(t *testing.T) {
 					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
 				}
 				ms.On("Get", mock.Anything, "hashed_ok").Return(record, nil)
-				mu.On("ToMyPage", mock.Anything, int64(10)).Return(&models.User{ID: 10}, nil)
+				mu.On("Exists", mock.Anything, int64(10)).Return(true, nil)
 			},
 			wantedErr: nil,
 		},
@@ -265,7 +264,7 @@ func TestValidate(t *testing.T) {
 					CreatedAt: time.Now().Add(-1 * time.Hour).UTC(),
 				}
 				ms.On("Get", mock.Anything, "hashed_ok").Return(record, nil)
-				mu.On("ToMyPage", mock.Anything, int64(10)).Return(nil, errcode.ErrUserNotFound)
+				mu.On("Exists", mock.Anything, int64(10)).Return(false, nil)
 			},
 			wantedErr: errcode.ErrUserNotFound,
 		},

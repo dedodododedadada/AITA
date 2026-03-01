@@ -2,6 +2,7 @@ package main
 
 import (
 	"aita/internal/api"
+	"aita/internal/cache"
 	"aita/internal/configuration"
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
@@ -47,8 +48,10 @@ func main() {
 	userStore := db.NewPostgresUserStore(database)
 	sessionStore := db.NewRedisSessionStore(rdb)
 	tweetStore := db.NewPostgresTweetStore(database)
+	userCache := cache.NewRedisUserCache(rdb)
+	userRepository := repository.NewUserRepository(userStore, userCache)
 	serviceRepository := repository.NewSessionRepository(sessionStore)
-	userService := service.NewUserService(userStore, hasher)
+	userService := service.NewUserService(userRepository, hasher)
 	sessionService := service.NewSessionService(serviceRepository, userService, tokenmanager)
 	tweetService := service.NewTweetService(tweetStore)
 	userHandler := api.NewUserHandler(userService, sessionService)

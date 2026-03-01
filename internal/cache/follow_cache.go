@@ -60,7 +60,7 @@ func(c *redisFollowCache) AddFollowings(ctx context.Context, followerID int64, f
 }
 
 func(c *redisFollowCache) AddFollowers(ctx context.Context, followingID int64, followers []int64) error {
-	keyFollower := c.followingKey(followingID)
+	keyFollower := c.followerKey(followingID)
 
 	pipe := c.client.Pipeline()
 

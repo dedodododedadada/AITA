@@ -3,7 +3,6 @@ package service
 import (
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"context"
 	"fmt"
 	"testing"
@@ -19,7 +18,7 @@ func TestRegister(t *testing.T) {
     gin.SetMode(gin.TestMode)
     tests := map[string]struct {
         inputBody *dto.SignupRequest
-        setupMock func(mu *mockUserStore, mh *mockBcryptHasher)
+        setupMock func(mu *mockUserRepository, mh *mockBcryptHasher)
         wantedErr error
         errMsg    string
     }{
@@ -29,11 +28,11 @@ func TestRegister(t *testing.T) {
                 Email:    "mock@example.com",
                 Password: "password101",
             },
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+            setupMock: func(mu *mockUserRepository, mh *mockBcryptHasher) {
                 mh.On("Generate", "password101").Return("mock_hash", nil)
-                mu.On("Create", mock.Anything, mock.MatchedBy(func(user *models.User) bool {
-                    return user.Username == "mock_user" && user.Email == "mock@example.com" && user.PasswordHash == "mock_hash"
-                })).Return(&models.User{
+                mu.On("Create", mock.Anything, mock.MatchedBy(func(r *dto.UserRecord) bool {
+                    return r.Username == "mock_user" && r.Email == "mock@example.com" && r.PasswordHash == "mock_hash"
+                })).Return(&dto.UserRecord{
                     ID:           1,
                     Username:     "mock_user",
                     Email:        "mock@example.com",
@@ -49,7 +48,7 @@ func TestRegister(t *testing.T) {
                 Email:    "mock@example.com",
                 Password: "", 
             },
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+            setupMock: func(mu *mockUserRepository, mh *mockBcryptHasher) {},
             wantedErr: errcode.ErrRequiredFieldMissing,
         },
         "パスワードをハッシュ化に失敗": {
@@ -58,7 +57,7 @@ func TestRegister(t *testing.T) {
                 Email:    "mock@example.com",
                 Password: "password101",
             },
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+            setupMock: func(mu *mockUserRepository, mh *mockBcryptHasher) {
                 mh.On("Generate", "password101").Return("", errMockHashFailed)
             },
             wantedErr: errMockHashFailed,
@@ -70,10 +69,10 @@ func TestRegister(t *testing.T) {
                 Email:    "mock@example.com",
                 Password: "password101",
             },
-            setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+            setupMock: func(mu *mockUserRepository, mh *mockBcryptHasher) {
                 mh.On("Generate", "password101").Return("mock_hash", nil)
-                mu.On("Create", mock.Anything, mock.MatchedBy(func(user *models.User) bool {
-                    return user.Username == "mock_user"
+                mu.On("Create", mock.Anything, mock.MatchedBy(func(r *dto.UserRecord) bool {
+                    return r.Username == "mock_user"
                 })).Return(nil, errMockInternal)
             },
             wantedErr: errMockInternal,
@@ -83,7 +82,7 @@ func TestRegister(t *testing.T) {
 
     for name, tt := range tests {
         t.Run(name, func(t *testing.T) {
-            mu := new(mockUserStore)
+            mu := new(mockUserRepository)
             mh := new(mockBcryptHasher)
             tt.setupMock(mu, mh)
             svc := NewUserService(mu, mh)
@@ -118,26 +117,26 @@ func TestRegister(t *testing.T) {
 func TestExistsByEmail(t *testing.T) {
     tests := map[string]struct {
         email          string
-        setupMock      func(m *mockUserStore)
+        setupMock      func(m *mockUserRepository)
         wantErr        error
         expectedErrMsg string
     }{
         "【正常系】ユーザーが存在する場合、正常にユーザー情報を返す": {
             email: "exist@example.com",
-            setupMock: func(m *mockUserStore) {
+            setupMock: func(m *mockUserRepository) {
                 m.On("GetByEmail", mock.Anything, "exist@example.com").
-                    Return(&models.User{Email: "exist@example.com"}, nil)
+                    Return(&dto.UserRecord{Email: "exist@example.com"}, nil)
             },
             wantErr: nil,
         },
         "【異常系】メールアドレスが空の場合、バリデーションエラーを返す": {
             email:     "",
-            setupMock: func(m *mockUserStore) {},
+            setupMock: func(m *mockUserRepository) {},
             wantErr:   errcode.ErrRequiredFieldMissing,
         },
         "【異常系】ユーザーが存在しない場合、認証エラーに変換して返す（ユーザー列挙防止）": {
             email: "notfound@example.com",
-            setupMock: func(m *mockUserStore) {
+            setupMock: func(m *mockUserRepository) {
                 m.On("GetByEmail", mock.Anything, "notfound@example.com").
                     Return(nil, errcode.ErrUserNotFound)
             },
@@ -145,7 +144,7 @@ func TestExistsByEmail(t *testing.T) {
         },
         "【異常系】データベース接続エラー等の内部エラーが発生した場合": {
             email: "db@example.com",
-            setupMock: func(m *mockUserStore) {
+            setupMock: func(m *mockUserRepository) {
                 m.On("GetByEmail", mock.Anything, "db@example.com").
                     Return(nil, errMockInternal )
             },
@@ -156,10 +155,10 @@ func TestExistsByEmail(t *testing.T) {
 
     for name, tt := range tests {
         t.Run(name, func(t *testing.T) {
-            mu := new(mockUserStore)
+            mu := new(mockUserRepository)
             tt.setupMock(mu)
             
-            svc := &userService{userStore: mu} 
+            svc := NewUserService(mu, nil)
             
             ctx := context.Background()
             user, err := svc.existsByEmail(ctx, tt.email)
@@ -185,15 +184,15 @@ func TestLogin(t *testing.T) {
 	tests := map[string]struct {
 		email     string
 		password  string
-		setupMock func(mu *mockUserStore, mh *mockBcryptHasher)
+		setupMock func(mu *mockUserRepository, mh *mockBcryptHasher)
 		wantedErr error
 		errMsg    string
 	}{
 		"【正常系】ログイン成功：正しい資格情報でユーザー情報を返す": {
 			email:    "mock@example.com",
 			password: "password123",
-			setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
-				mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&models.User{
+			setupMock: func(mu *mockUserRepository, mh *mockBcryptHasher) {
+				mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&dto.UserRecord{
 					ID: 1, Email: "mock@example.com", PasswordHash: "hashed_pass",
 				}, nil)
 				mh.On("Compare", "hashed_pass", "password123").Return(nil)
@@ -203,13 +202,13 @@ func TestLogin(t *testing.T) {
 		"【異常系】必須項目不足：パスワードが空の場合": {
 			email:     "mock@example.com",
 			password:  "",
-			setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {},
+			setupMock: func(mu *mockUserRepository, mh *mockBcryptHasher) {},
 			wantedErr: errcode.ErrRequiredFieldMissing,
 		},
 		"【異常系】認証失敗：ユーザーが存在しない場合（ユーザー列挙防止）": {
 			email:    "none@example.com",
 			password: "password123",
-			setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
+			setupMock: func(mu *mockUserRepository, mh *mockBcryptHasher) {
 				mu.On("GetByEmail", mock.Anything, "none@example.com").Return(nil, errcode.ErrUserNotFound)
 			},
 			wantedErr: errcode.ErrInvalidCredentials,
@@ -217,7 +216,7 @@ func TestLogin(t *testing.T) {
 		"【異常系】認証失敗：DB接続エラー等の内部エラー": {
 			email:    "test@example.com",
 			password: "password123",
-			setupMock: func(ms *mockUserStore, mh *mockBcryptHasher) {
+			setupMock: func(ms *mockUserRepository, mh *mockBcryptHasher) {
 				ms.On("GetByEmail", mock.Anything, "test@example.com").Return(nil, errMockInternal)
 			},
 			wantedErr: errMockInternal,
@@ -226,8 +225,8 @@ func TestLogin(t *testing.T) {
 		"【異常系】認証失敗：パスワード不一致": {
 			email:    "mock@example.com",
 			password: "wrong-password",
-			setupMock: func(mu *mockUserStore, mh *mockBcryptHasher) {
-				mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&models.User{
+			setupMock: func(mu *mockUserRepository, mh *mockBcryptHasher) {
+				mu.On("GetByEmail", mock.Anything, "mock@example.com").Return(&dto.UserRecord{
 					PasswordHash: "correct_hash",
 				}, nil)
 				mh.On("Compare", "correct_hash", "wrong-password").Return(fmt.Errorf("hash mismatch"))
@@ -238,7 +237,7 @@ func TestLogin(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			mu := new(mockUserStore)
+			mu := new(mockUserRepository)
 			mh := new(mockBcryptHasher)
 			tt.setupMock(mu, mh)
 
@@ -264,27 +263,28 @@ func TestLogin(t *testing.T) {
 }
 
 func TestToMyPage(t *testing.T) {
+    gin.SetMode(gin.TestMode)
 	tests := map[string]struct {
 		userID    int64
-		setupMock func(mu *mockUserStore)
+		setupMock func(mu *mockUserRepository)
 		wantedErr error
 		errMsg    string
 	}{
 		"取得成功": {
 			userID: 1,
-			setupMock: func(mu *mockUserStore) {
-				mu.On("GetByID", mock.Anything, int64(1)).Return(&models.User{ID: 1}, nil)
+			setupMock: func(mu *mockUserRepository) {
+				mu.On("GetByID", mock.Anything, int64(1)).Return(&dto.UserRecord{ID: 1}, nil)
 			},
 			wantedErr: nil,
 		},
 		"ユーザーID無効": {
 			userID:    -1,
-			setupMock: func(mu *mockUserStore) {},
+			setupMock: func(mu *mockUserRepository) {},
 			wantedErr: errcode.ErrInvalidUserID,
 		},
 		"データベース内部エラー": {
 			userID: 1,
-			setupMock: func(mu *mockUserStore) {
+			setupMock: func(mu *mockUserRepository) {
 				mu.On("GetByID", mock.Anything, int64(1)).Return(nil, errMockInternal)
 			},
 			wantedErr: errMockInternal,
@@ -294,7 +294,7 @@ func TestToMyPage(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			mu := new(mockUserStore)
+			mu := new(mockUserRepository)
 			mh := new(mockBcryptHasher)
 			tt.setupMock(mu)
 
@@ -316,4 +316,192 @@ func TestToMyPage(t *testing.T) {
 			mu.AssertExpectations(t)
 		})
 	}
+}
+
+func TestUpdateFollowerCount(t *testing.T) {
+    gin.SetMode(gin.TestMode)
+    tests := []struct {
+        name      string
+        userID    int64
+        delta     int64
+		setupMock func(mu *mockUserRepository)
+		wantedErr error
+		errMsg    string
+    }{
+        {
+            name: "正常系: updateに成功した",
+            userID: 1,
+            delta: 1,
+            setupMock: func(mu *mockUserRepository) {
+                mu.On("IncreaseFollower", mock.Anything, int64(1), int64(1)).Return(nil)
+            }, 
+        },
+        {
+            name: "異常系: ユーザーID無効",
+            userID: 0,
+            delta: 1,
+            setupMock: func(mu *mockUserRepository) {},
+            wantedErr: errcode.ErrInvalidUserID,
+        },
+        {
+            name: "異常系: サーバー内部エラー",
+            userID: 101,
+            delta: 10,
+            setupMock: func(mu *mockUserRepository) {
+                mu.On("IncreaseFollower", mock.Anything, int64(101),int64(10)).Return(errMockInternal)        
+            },
+            wantedErr: errMockInternal,
+            errMsg: "FollowerCountの更新に失敗しました",
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mu := new(mockUserRepository)
+            tt.setupMock(mu)
+
+            svc := NewUserService(mu, nil)
+            ctx := context.Background()
+            err := svc.UpdateFollowerCount(ctx, tt.userID, tt.delta)
+
+            if tt.wantedErr != nil {
+                assert.ErrorIs(t, err, tt.wantedErr)
+                if tt.errMsg != "" {
+                    assert.Contains(t, err.Error(), tt.errMsg)
+                } 
+            } else {
+                assert.NoError(t, err)
+            }
+
+            mu.AssertExpectations(t)
+        })
+    }
+}
+
+func TestUpdateFollowingCount(t *testing.T) {
+    gin.SetMode(gin.TestMode)
+    tests := []struct {
+        name      string
+        userID    int64
+        delta     int64
+		setupMock func(mu *mockUserRepository)
+		wantedErr error
+		errMsg    string
+    }{
+        {
+            name: "正常系: updateに成功した",
+            userID: 1,
+            delta: 1,
+            setupMock: func(mu *mockUserRepository) {
+                mu.On("IncreaseFollowing", mock.Anything, int64(1), int64(1)).Return(nil)
+            }, 
+        },
+        {
+            name: "異常系: ユーザーID無効",
+            userID: 0,
+            delta: 1,
+            setupMock: func(mu *mockUserRepository) {},
+            wantedErr: errcode.ErrInvalidUserID,
+        },
+        {
+            name: "異常系: サーバー内部エラー",
+            userID: 101,
+            delta: 10,
+            setupMock: func(mu *mockUserRepository) {
+                mu.On("IncreaseFollowing", mock.Anything, int64(101), int64(10)).Return(errMockInternal)        
+            },
+            wantedErr: errMockInternal,
+            errMsg: "FollowingCountの更新に失敗しました",
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mu := new(mockUserRepository)
+            tt.setupMock(mu)
+
+            svc := NewUserService(mu, nil)
+            ctx := context.Background()
+            err := svc.UpdateFollowingCount(ctx, tt.userID, tt.delta)
+
+            if tt.wantedErr != nil {
+                assert.ErrorIs(t, err, tt.wantedErr)
+                if tt.errMsg != "" {
+                    assert.Contains(t, err.Error(), tt.errMsg)
+                } 
+            } else {
+                assert.NoError(t, err)
+            }
+
+            mu.AssertExpectations(t)
+        })
+    }
+}
+
+func TestExist(t *testing.T) {
+    gin.SetMode(gin.TestMode)
+    tests := []struct {
+        name      string
+        userID    int64
+		setupMock func(mu *mockUserRepository)
+		wantedErr error
+        wantedRes bool
+		errMsg    string
+    }{
+        {
+            name: "正常系: 存在",
+            userID: 1,
+            setupMock: func(mu *mockUserRepository) {
+                mu.On("Exists", mock.Anything, int64(1)).Return(true, nil)
+            }, 
+            wantedRes: true,
+        },
+        {
+            name: "正常系: 存在しない",
+            userID: 2,
+            setupMock: func(mu *mockUserRepository) {
+                mu.On("Exists", mock.Anything, int64(2)).Return(false, nil)
+            },
+            wantedRes: false,
+        },
+        {
+            name: "異常系: ユーザーID無効",
+            userID: 0,
+            setupMock: func(mu *mockUserRepository) {},
+            wantedErr: errcode.ErrInvalidUserID,
+            wantedRes: false,
+        },
+        {
+            name: "異常系: サーバー内部エラー",
+            userID: 101,
+            setupMock: func(mu *mockUserRepository) {
+                mu.On("Exists", mock.Anything, int64(101)).Return(false, errMockInternal)        
+            },
+            wantedErr: errMockInternal,
+            errMsg: "ユーザーの存在の確認に失敗しました",
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mu := new(mockUserRepository)
+            tt.setupMock(mu)
+
+            svc := NewUserService(mu, nil)
+            ctx := context.Background()
+            res, err := svc.Exists(ctx, tt.userID)
+
+            assert.Equal(t, tt.wantedRes, res)
+            if tt.wantedErr != nil {
+                assert.ErrorIs(t, err, tt.wantedErr)
+                if tt.errMsg != "" {
+                    assert.Contains(t, err.Error(), tt.errMsg)
+                } 
+            } else {
+                assert.NoError(t, err)
+            }
+
+            mu.AssertExpectations(t)
+        })
+    }
 }

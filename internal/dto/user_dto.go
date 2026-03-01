@@ -19,6 +19,16 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required,min=8,max=72"`
 }
 
+type UserRecord struct {
+	ID            	int64        	
+	Username      	string       	
+	Email         	string       	
+	PasswordHash  	string       
+	CreatedAt     	time.Time    	
+	FollowerCount 	int64        	
+	FollowingCount  int64         
+}
+
 type UserResponse struct {
 	ID        int64     `json:"id"`
 	Username  string    `json:"username"`
@@ -29,6 +39,13 @@ type UserResponse struct {
 type LoginResponse struct {
 	SessionToken string        `json:"session_token"`
 	User         *UserResponse `json:"user"`
+}
+
+type UserProfile struct {
+	ID            	int64     `json:"id"`   	
+	Username      	string    `json:"username"`   	       	
+	FollowerCount 	int64     `json:"follower_count"`   	
+	FollowingCount  int64     `json:"following_count"`  
 }
 
 func (r *SignupRequest) Validate() error {
@@ -67,15 +84,57 @@ func (r *LoginRequest) Validate() error {
 	return nil
 }
 
-func NewUserResponse(user *models.User) *UserResponse {
-	if user == nil {
+func (u *UserRecord)ToUserResponse() *UserResponse {
+	if u == nil {
         return nil
     }
 
 	return &UserResponse{
-		ID:        user.ID,
-		Username:  user.Username,
-		Email:     user.Email,
+		ID:        u.ID,
+		Username:  u.Username,
+		Email:     u.Email,
+		CreatedAt: u.CreatedAt,
+	}
+}
+
+func (ur *UserRecord)ToUserModel() *models.User {
+	if ur == nil {
+		return nil 
+	}
+
+	return &models.User{
+		ID: ur.ID,
+		Username: ur.Username,
+		PasswordHash: ur.PasswordHash,
+		CreatedAt: ur.CreatedAt,
+		FollowerCount: ur.FollowerCount,
+		FollowingCount: ur.FollowingCount,
+	}
+}
+
+func (u *UserRecord)ToUserProfile() *UserProfile {
+	if u == nil {
+        return nil
+    }
+
+	return &UserProfile{
+		ID:        		u.ID,
+		Username:  		u.Username,
+		FollowerCount: 	u.FollowerCount,
+		FollowingCount: u.FollowingCount,
+	}
+}
+func NewUserRecord(user *models.User) *UserRecord {
+	if user == nil {
+		return nil
+	}
+
+	return &UserRecord{
+		ID: user.ID,
+		Username: user.Username,
+		PasswordHash: user.PasswordHash,
 		CreatedAt: user.CreatedAt,
+		FollowerCount: user.FollowerCount,
+		FollowingCount: user.FollowingCount,
 	}
 }

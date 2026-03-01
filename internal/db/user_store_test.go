@@ -224,7 +224,8 @@ func TestGetByIDWhlieError(t *testing.T) {
 func TestIncreFollowerCount(t *testing.T) {
     testContext.CleanupTestDB()
     defer testContext.CleanupTestDB()
-    ctx := context.Background()
+   	ctx := context.Background()
+
     
     initUser := &models.User{
         Username:     "follower_test_user",
@@ -236,15 +237,16 @@ func TestIncreFollowerCount(t *testing.T) {
 
 
     t.Run("正常系：フォロワー数のインクリメント成功", func(t *testing.T) {
-        tx, err := testContext.TestDB.BeginTxx(ctx, nil)
-        require.NoError(t, err)
-        
-        delta := int64(1)
-        err = testUserStore.IncreaseFollowerCount(ctx, tx, createdUser.ID, delta)
+       	tx, err := testContext.TestDB.BeginTxx(ctx, nil)
+		defer tx.Rollback()
+		require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
+		
+		delta := int64(1)
+        err = testUserStore.IncreaseFollowerCount(ctx, createdUser.ID, delta)
         require.NoError(t, err)
         
         err = tx.Commit()
-		defer tx.Rollback()
         require.NoError(t, err)
         
         updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
@@ -256,9 +258,10 @@ func TestIncreFollowerCount(t *testing.T) {
         tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
         require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
         
         delta := int64(-1)
-        err = testUserStore.IncreaseFollowerCount(ctx, tx, createdUser.ID, delta)
+        err = testUserStore.IncreaseFollowerCount(ctx, createdUser.ID, delta)
         require.NoError(t, err)
         
         err = tx.Commit()
@@ -273,9 +276,10 @@ func TestIncreFollowerCount(t *testing.T) {
         tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
         require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
         
         delta := int64(-100)
-        err = testUserStore.IncreaseFollowerCount(ctx, tx, createdUser.ID, delta)
+        err = testUserStore.IncreaseFollowerCount(ctx, createdUser.ID, delta)
         require.NoError(t, err)
         
         err = tx.Commit()
@@ -303,9 +307,10 @@ func TestIncreFollowerCountWhileErr(t *testing.T) {
         tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback() 
         require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
 
         nonExistentID := int64(99999)
-        err = testUserStore.IncreaseFollowerCount(ctx, tx, nonExistentID, 1)
+        err = testUserStore.IncreaseFollowerCount(ctx, nonExistentID, 1)
         
         assert.ErrorIs(t, err, errcode.ErrUserNotFound)
     })
@@ -314,8 +319,9 @@ func TestIncreFollowerCountWhileErr(t *testing.T) {
         tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
         require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
         
-        err = testUserStore.IncreaseFollowerCount(ctx, tx, createdUser.ID, 50)
+        err = testUserStore.IncreaseFollowerCount(ctx, createdUser.ID, 50)
         require.NoError(t, err)
         err = tx.Rollback()
         require.NoError(t, err)
@@ -331,7 +337,7 @@ func TestIncreFollowerCountWhileErr(t *testing.T) {
         tempUserStore := NewPostgresUserStore(tempDB)
         tempDB.Close()
 
-        err = tempUserStore.IncreaseFollowerCount(ctx, nil, createdUser.ID, 1)
+        err = tempUserStore.IncreaseFollowerCount(ctx,  createdUser.ID, 1)
         
         require.Error(t, err)
         assert.Contains(t, err.Error(), "follower countsの更新に失敗しました")
@@ -355,8 +361,10 @@ func TestIncreFollowingCount(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
     	require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
+		
 		delta := int64(1)
-		err = testUserStore.IncreaseFollowingCount(ctx,tx, createdUser.ID, delta)
+		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, delta)
 		
 		require.NoError(t, err)
 		err = tx.Commit()
@@ -369,8 +377,10 @@ func TestIncreFollowingCount(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
     	require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
+
 		delta := int64(-1)
-		err = testUserStore.IncreaseFollowingCount(ctx,tx, createdUser.ID, delta)
+		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, delta)
 		
 		require.NoError(t, err)
 		err = tx.Commit()
@@ -384,12 +394,14 @@ func TestIncreFollowingCount(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
     	require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
+
 		delta := int64(1)
-		err = testUserStore.IncreaseFollowingCount(ctx,tx, createdUser.ID, delta)
+		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, delta)
 		require.NoError(t, err)
 		
 		delta = int64(-9)
-		err = testUserStore.IncreaseFollowingCount(ctx, tx, createdUser.ID, delta)
+		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, delta)
 		err = tx.Commit()
 		assert.NoError(t, err)
 		updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
@@ -415,8 +427,10 @@ func TestIncreFollowingCountWhileErr(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
     	require.NoError(t, err)
+		ctx = injectTx(ctx, tx)
+
 		delta := int64(1)
-		err = testUserStore.IncreaseFollowingCount(ctx,tx, int64(101), delta)
+		err = testUserStore.IncreaseFollowingCount(ctx, int64(101), delta)
 		
 		assert.ErrorIs(t, err, errcode.ErrUserNotFound)
 	})
@@ -425,7 +439,9 @@ func TestIncreFollowingCountWhileErr(t *testing.T) {
 		tx, err := testContext.TestDB.BeginTxx(ctx, nil)
 		defer tx.Rollback()
 		require.NoError(t, err)
-		err = testUserStore.IncreaseFollowingCount(ctx, tx, createdUser.ID, 5)
+		ctx = injectTx(ctx, tx)
+
+		err = testUserStore.IncreaseFollowingCount(ctx, createdUser.ID, 5)
 		require.NoError(t, err)
 
 		err = tx.Rollback()
@@ -440,7 +456,7 @@ func TestIncreFollowingCountWhileErr(t *testing.T) {
 		tempUserStore := NewPostgresUserStore(tempDB)
 
 		tempDB.Close()
-		err = tempUserStore.IncreaseFollowerCount(ctx, nil, createdUser.ID, 5)
+		err = tempUserStore.IncreaseFollowerCount(ctx, createdUser.ID, 5)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "follower countsの更新に失敗しました")
 		t.Logf("エラーは: %v\n", err)

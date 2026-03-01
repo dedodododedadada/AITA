@@ -16,24 +16,38 @@ var (
 	errMockTokenFailed = errors.New("トークン内部エラー")
 )
 
-type mockUserStore struct {
+type mockUserRepository struct {
 	mock.Mock
 }
 
-func (m *mockUserStore) Create(ctx context.Context, user *models.User) (*models.User, error) {
-	args := m.Called(ctx, user)
-	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+func (m *mockUserRepository) Create(ctx context.Context, ur *dto.UserRecord) (*dto.UserRecord, error) {
+	args := m.Called(ctx, ur)
+	return testutils.SafeGet[dto.UserRecord](args, 0), args.Error(1)
 }
 
-func (m *mockUserStore) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+func (m *mockUserRepository) GetByEmail(ctx context.Context, email string) (*dto.UserRecord, error) {
 	args := m.Called(ctx, email)
-	return testutils.SafeGet[models.User](args,0), args.Error(1)
+	return testutils.SafeGet[dto.UserRecord](args,0), args.Error(1)
 }
 
-func (m *mockUserStore) GetByID(ctx context.Context, id int64) (*models.User, error) {
-	args := m.Called(ctx, id)
-	return testutils.SafeGet[models.User](args,0), args.Error(1)
+func (m *mockUserRepository) GetByID(ctx context.Context, userID int64) (*dto.UserRecord, error) {
+	args := m.Called(ctx, userID)
+	return testutils.SafeGet[dto.UserRecord](args,0), args.Error(1)
 }
+func (m *mockUserRepository) IncreaseFollower(ctx context.Context, userID int64, delta int64) error {
+	args := m.Called(ctx, userID, delta)
+	return args.Error(0)
+}
+func (m *mockUserRepository) IncreaseFollowing(ctx context.Context, userID int64, delta int64) error {
+	args := m.Called(ctx, userID, delta)
+	return args.Error(0)
+}
+func (m *mockUserRepository) Exists(ctx context.Context, id int64) (bool, error) {
+	args := m.Called(ctx, id)
+	return args.Bool(0), args.Error(1)
+}
+
+
 
 type mockSessionRepository struct {
 	mock.Mock
@@ -116,7 +130,7 @@ type mockUserService struct {
 	mock.Mock
 }
 
-func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*models.User, error) {
+func (m *mockUserService)Exists(ctx context.Context, userID int64) (bool, error) {
 	args := m.Called(ctx, userID)
-	return testutils.SafeGet[models.User](args, 0), args.Error(1)
+	return args.Bool(0), args.Error(1)
 }

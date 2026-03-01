@@ -3,7 +3,6 @@ package api
 import (
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"aita/internal/pkg/app"
 	"context"
 
@@ -13,9 +12,9 @@ import (
 )
 
 type UserService interface {
-	Register(ctx context.Context, username string, email string, password string) (*models.User, error)
-	Login(ctx context.Context, email, password string) (*models.User, error)
-	ToMyPage(ctx context.Context, id int64) (*models.User, error)
+	Register(ctx context.Context, username, email,password string) (*dto.UserRecord, error)
+	Login(ctx context.Context, email, password string) (*dto.UserRecord, error) 
+	ToMyPage(ctx context.Context, userID int64) (*dto.UserRecord, error) 
 }
 
 type SessionManager interface {
@@ -35,7 +34,7 @@ func NewUserHandler(usvc UserService, sm SessionManager) *UserHandler {
 	}
 }
 
-func (h *UserHandler) respondWithToken(c *gin.Context, user *models.User, statusCode int) {
+func (h *UserHandler) respondWithToken(c *gin.Context, user *dto.UserRecord, statusCode int) {
 	response, err := h.sessionService.Issue(c.Request.Context(), user.ID)
 	if err != nil {
 		c.JSON(errcode.GetStatusCode(err), app.Fail(err))
@@ -44,7 +43,7 @@ func (h *UserHandler) respondWithToken(c *gin.Context, user *models.User, status
 
 	loginData := dto.LoginResponse{
 		SessionToken: response.Token,
-		User:         dto.NewUserResponse(user),
+		User:         user.ToUserResponse(),
 	}
 	c.JSON(statusCode, app.Success(loginData))
 }
@@ -106,7 +105,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, app.Success(dto.NewUserResponse(user)))
+	c.JSON(http.StatusOK, app.Success(user.ToUserProfile()))
 }
 
 func (h *UserHandler) Logout(c *gin.Context) {

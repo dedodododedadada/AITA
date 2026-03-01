@@ -20,6 +20,13 @@ func NewPostgresUserStore(db *sqlx.DB) *postgresUserStore {
 	return &postgresUserStore{database: db}
 }
 
+func (s *postgresUserStore) conn(ctx context.Context) sqlx.ExtContext {
+    if tx := extractTx(ctx); tx != nil {
+        return tx
+    }
+    return s.database 
+}
+
 func (s *postgresUserStore) Create(ctx context.Context, user *models.User) (*models.User, error) {
 	query := `INSERT INTO users(username, email, password_hash) 
 			  VALUES ($1, $2, $3) 
@@ -79,10 +86,10 @@ func (s *postgresUserStore) GetByEmail(ctx context.Context, email string) (*mode
 	return &newUser, nil
 }
 
-func (s *postgresUserStore) GetByID(ctx context.Context, id int64) (*models.User, error) {
+func (s *postgresUserStore) GetByID(ctx context.Context, userID int64) (*models.User, error) {
 	var newUser models.User
 	query := `SELECT id, username, email, password_hash, created_at, follower_count, following_count FROM users WHERE id = $1`
-	err := s.database.GetContext(ctx, &newUser, query, id)
+	err := s.database.GetContext(ctx, &newUser, query, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errcode.ErrUserNotFound
@@ -94,16 +101,9 @@ func (s *postgresUserStore) GetByID(ctx context.Context, id int64) (*models.User
 	return &newUser, nil
 }
 
-func (s *postgresUserStore) IncreaseFollowerCount(ctx context.Context, tx *sqlx.Tx, userID, delta int64) error {
+func (s *postgresUserStore) IncreaseFollowerCount(ctx context.Context,  userID, delta int64) error {
 	query := `UPDATE users SET follower_count = GREATEST(0, follower_count + $1) WHERE id = $2`
-
-	var res sql.Result
-	var err error 
-	if tx != nil {
-		res, err = tx.ExecContext(ctx, query, delta, userID)
-	} else {
-		res, err = s.database.ExecContext(ctx, query, delta, userID)
-	}
+	res, err := s.conn(ctx).ExecContext(ctx, query, delta, userID)
 
 	if err != nil {
 		return fmt.Errorf("follower countsの更新に失敗しました: %w", err)
@@ -116,16 +116,9 @@ func (s *postgresUserStore) IncreaseFollowerCount(ctx context.Context, tx *sqlx.
     return nil
 }
 
-func (s *postgresUserStore) IncreaseFollowingCount(ctx context.Context, tx *sqlx.Tx, userID, delta int64) error {
+func (s *postgresUserStore) IncreaseFollowingCount(ctx context.Context, userID, delta int64) error {
 	query :=`Update users SET following_count= GREATEST(0, following_count + $1)  WHERE id = $2`
-
-	var res sql.Result
-	var err error
-	if tx != nil {
-		res, err = tx.ExecContext(ctx, query, delta, userID)
-	} else {
-		res, err = s.database.ExecContext(ctx, query, delta, userID)
-	}
+    res, err := s.conn(ctx).ExecContext(ctx, query, delta, userID)
 
 	if err != nil {
 		return fmt.Errorf("following countsの更新に失敗しました: %w", err)
