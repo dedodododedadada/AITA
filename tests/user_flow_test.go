@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,7 +20,8 @@ import (
 
 func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
-	userService := service.NewUserService(testUserStore, testHasher)
+	userRepository := repository.NewUserRepository(testUserStore, testUserCache)
+	userService := service.NewUserService(userRepository, testHasher)
 	sesseionRepository := repository.NewSessionRepository(testSessionStore)
 	sessionService := service.NewSessionService(sesseionRepository, userService, testTokemanager)
 	tweetService := service.NewTweetService(testTweetStore)
@@ -38,8 +40,10 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/signup", bytes.NewBuffer(jsonSignup))
 	req.Header.Set("Content-Type", "application/json")
 	r.ServeHTTP(w, req)
+	log.Printf("%s", w.Body.String())
 	assert.Equal(t, http.StatusCreated, w.Code)
 	assert.Contains(t, w.Body.String(), "frontend_dev")
+	assert.Contains(t, w.Body.String(), "dev@aita.com")
 
 	loginPayload := dto.LoginRequest{
 		Email:    "dev@aita.com",

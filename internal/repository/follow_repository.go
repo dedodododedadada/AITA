@@ -41,6 +41,7 @@ func NewFollowRepository(fs FollowStore, fc FollowCache) *followRepository {
 	return &followRepository{
 		followStore: fs,
 		followCache: fc,
+		sfFollow: &singleflight.Group{},
 	}
 }
 

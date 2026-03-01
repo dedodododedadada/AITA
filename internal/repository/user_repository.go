@@ -38,6 +38,7 @@ func NewUserRepository(us Userstore, uc UserCache) *userRepository {
 	return &userRepository{
 		userStore: us,
 		userCache: uc,
+		sfFollow: &singleflight.Group{},
 	}
 }
 

@@ -105,6 +105,7 @@ func (ur *UserRecord)ToUserModel() *models.User {
 	return &models.User{
 		ID: ur.ID,
 		Username: ur.Username,
+		Email: ur.Email,
 		PasswordHash: ur.PasswordHash,
 		CreatedAt: ur.CreatedAt,
 		FollowerCount: ur.FollowerCount,
@@ -132,6 +133,7 @@ func NewUserRecord(user *models.User) *UserRecord {
 	return &UserRecord{
 		ID: user.ID,
 		Username: user.Username,
+		Email: user.Email,
 		PasswordHash: user.PasswordHash,
 		CreatedAt: user.CreatedAt,
 		FollowerCount: user.FollowerCount,

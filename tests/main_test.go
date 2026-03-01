@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"aita/internal/cache"
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
 	"aita/internal/pkg/testutils"
@@ -14,7 +15,8 @@ import (
 )
 
 var (
-	testUserStore    service.UserStore       
+	testUserStore    repository.Userstore  
+	testUserCache    repository.UserCache    
 	testSessionStore repository.SessionStore
 	testTweetStore   service.TweetStore
 	testTokemanager  service.TokenManager
@@ -29,7 +31,7 @@ func TestMain(m *testing.M) {
 
 	testHasher = crypto.NewBcryptHasher(bcrypt.DefaultCost)
 	testTokemanager = crypto.NewTokenManager()
-	
+	testUserCache = cache.NewRedisUserCache(testContext.TestRDB)
 	testUserStore = db.NewPostgresUserStore(testContext.TestDB)
 	testSessionStore = db.NewRedisSessionStore(testContext.TestRDB)
 	testTweetStore = db.NewPostgresTweetStore(testContext.TestDB)
