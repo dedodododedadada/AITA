@@ -273,7 +273,7 @@ func TestToMyPage(t *testing.T) {
 		"取得成功": {
 			userID: 1,
 			setupMock: func(mu *mockUserRepository) {
-				mu.On("GetByID", mock.Anything, int64(1)).Return(&dto.UserRecord{ID: 1}, nil)
+				mu.On("GetFullByID", mock.Anything, int64(1)).Return(&dto.UserRecord{ID: 1}, nil)
 			},
 			wantedErr: nil,
 		},
@@ -285,7 +285,7 @@ func TestToMyPage(t *testing.T) {
 		"データベース内部エラー": {
 			userID: 1,
 			setupMock: func(mu *mockUserRepository) {
-				mu.On("GetByID", mock.Anything, int64(1)).Return(nil, errMockInternal)
+				mu.On("GetFullByID", mock.Anything, int64(1)).Return(nil, errMockInternal)
 			},
 			wantedErr: errMockInternal,
 			errMsg:    "ユーザー情報の取得に失敗しました",
@@ -299,7 +299,7 @@ func TestToMyPage(t *testing.T) {
 			tt.setupMock(mu)
 
 			svc := NewUserService(mu, mh)
-			res, err := svc.ToMyPage(context.Background(), tt.userID)
+			res, err := svc.ToMyAccount(context.Background(), tt.userID)
 
 			if tt.wantedErr != nil {
 				assert.ErrorIs(t, err, tt.wantedErr)

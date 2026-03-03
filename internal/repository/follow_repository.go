@@ -11,7 +11,6 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// follow unfollow relation（without rel key in redis）完成
 type FollowStore interface {
 	Create(ctx context.Context, follow *models.Follow) (*models.Follow, error)
 	GetFollowings(ctx context.Context, followerID int64) ([]*models.Follow, error)

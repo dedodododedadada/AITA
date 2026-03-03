@@ -84,7 +84,7 @@ func (s *postgresUserStore) GetByEmail(ctx context.Context, email string) (*mode
 	return &newUser, nil
 }
 
-func (s *postgresUserStore) GetByID(ctx context.Context, userID int64) (*models.User, error) {
+func (s *postgresUserStore) GetFullByID(ctx context.Context, userID int64) (*models.User, error) {
 	var newUser models.User
 	query := `SELECT id, username, email, password_hash, created_at, follower_count, following_count FROM users WHERE id = $1`
 	err := s.BaseStore.conn(ctx).GetContext(ctx, &newUser, query, userID)
@@ -128,4 +128,20 @@ func (s *postgresUserStore) IncreaseFollowingCount(ctx context.Context, userID, 
 	}
 
 	return nil
+}
+
+func (s *postgresUserStore) GetNamesByIDs(ctx context.Context, userIDs []int64) ([]*models.UserInfo, error) {
+	if len(userIDs) > 500 {
+		return nil, fmt.Errorf("userIDsが大きすぎます(count:%d)", len(userIDs))
+	}
+	
+	query := `SELECT id, username FROM users WHERE id = ANY($1)`
+
+	var rows [] *models.UserInfo
+	err := s.BaseStore.conn(ctx).SelectContext(ctx, &rows, query, pq.Array(userIDs))
+
+	if err != nil {
+		return nil, fmt.Errorf("IDによるusers取得に失敗しました(count:%d); %w", len(userIDs),err)
+	}
+	return rows, nil 
 }

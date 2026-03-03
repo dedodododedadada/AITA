@@ -165,7 +165,7 @@ func TestGetByEmailWhileError(t *testing.T) {
 	})
 }
 
-func TestGetByID(t *testing.T) {
+func TestGetFullByID(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
@@ -177,7 +177,7 @@ func TestGetByID(t *testing.T) {
 	createdUser, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
 
-	foundUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+	foundUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
 	require.NoError(t, err, "アイディが存在する場合、エラーを返すべきではありません")
 	require.NotNil(t, foundUser, "見つかったユーザーは空であるべきではありません")
 	assert.Equal(t, createdUser.ID, foundUser.ID, "見つかったユーザーIDが一致するべきです")
@@ -189,7 +189,7 @@ func TestGetByID(t *testing.T) {
 	assert.Equal(t, createdUser.FollowingCount, foundUser.FollowingCount)
 }
 
-func TestGetByIDWhlieError(t *testing.T) {
+func TestGetFullByIDWhlieError(t *testing.T) {
 	testContext.CleanupTestDB()
 	defer testContext.CleanupTestDB()
 	ctx := context.Background()
@@ -201,7 +201,7 @@ func TestGetByIDWhlieError(t *testing.T) {
 	_, err := testUserStore.Create(ctx, initUser)
 	require.NoError(t, err)
 	t.Run("ユーザーが存在しない", func(t *testing.T) {
-		unfoundUser, err := testUserStore.GetByID(ctx, 99999)
+		unfoundUser, err := testUserStore.GetFullByID(ctx, 99999)
 		assert.ErrorIs(t, err, errcode.ErrUserNotFound, "エラーはErrNotFound であるべきです")
 		assert.Nil(t, unfoundUser, "見つかったユーザーオブジェクトは空であるべきです")
 	})
@@ -213,7 +213,7 @@ func TestGetByIDWhlieError(t *testing.T) {
 		tempUserStore := NewPostgresUserStore(tempDB)
 		tempDB.Close()
 
-		unfoundUser, err := tempUserStore.GetByID(ctx, 1)
+		unfoundUser, err := tempUserStore.GetFullByID(ctx, 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "IDによるユーザー取得に失敗しました")
 		t.Logf("エラーは: %v\n", err)
@@ -249,7 +249,7 @@ func TestIncreFollowerCount(t *testing.T) {
         err = tx.Commit()
         require.NoError(t, err)
         
-        updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+        updatedUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
         require.NoError(t, err)
         assert.Equal(t, int64(1), updatedUser.FollowerCount)
     })
@@ -267,7 +267,7 @@ func TestIncreFollowerCount(t *testing.T) {
         err = tx.Commit()
         require.NoError(t, err)
         
-        updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+        updatedUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
         require.NoError(t, err)
         assert.Equal(t, int64(0), updatedUser.FollowerCount)
     })
@@ -285,7 +285,7 @@ func TestIncreFollowerCount(t *testing.T) {
         err = tx.Commit()
         require.NoError(t, err)
 
-        updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+        updatedUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
         require.NoError(t, err)
         assert.Equal(t, int64(0), updatedUser.FollowerCount)
     })
@@ -325,7 +325,7 @@ func TestIncreFollowerCountWhileErr(t *testing.T) {
         err = tx.Rollback()
         require.NoError(t, err)
         
-        finalUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+        finalUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
         require.NoError(t, err)
         assert.Equal(t, int64(0), finalUser.FollowerCount)
     })
@@ -368,7 +368,7 @@ func TestIncreFollowingCount(t *testing.T) {
 		require.NoError(t, err)
 		err = tx.Commit()
 		require.NoError(t,err)
-		updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+		updatedUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
     	require.NoError(t, err)
     	assert.Equal(t, int64(1), updatedUser.FollowingCount)
 	})
@@ -384,7 +384,7 @@ func TestIncreFollowingCount(t *testing.T) {
 		require.NoError(t, err)
 		err = tx.Commit()
 		require.NoError(t,err)
-		updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+		updatedUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
     	require.NoError(t, err)
     	assert.Equal(t, int64(0), updatedUser.FollowingCount)
 	})
@@ -404,7 +404,7 @@ func TestIncreFollowingCount(t *testing.T) {
 		assert.NoError(t, err)
 		err = tx.Commit()
 		require.NoError(t, err)
-		updatedUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+		updatedUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
     	require.NoError(t, err)
     	assert.Equal(t, int64(0), updatedUser.FollowingCount)
 	})
@@ -447,7 +447,7 @@ func TestIncreFollowingCountWhileErr(t *testing.T) {
 
 		err = tx.Rollback()
 		require.NoError(t, err)
-		finalUser, err := testUserStore.GetByID(ctx, createdUser.ID)
+		finalUser, err := testUserStore.GetFullByID(ctx, createdUser.ID)
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), finalUser.FollowerCount)
 	})

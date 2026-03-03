@@ -14,7 +14,7 @@ import (
 type UserService interface {
 	Register(ctx context.Context, username, email,password string) (*dto.UserRecord, error)
 	Login(ctx context.Context, email, password string) (*dto.UserRecord, error) 
-	ToMyPage(ctx context.Context, userID int64) (*dto.UserRecord, error) 
+	ToMyAccount(ctx context.Context, userID int64) (*dto.UserRecord, error) 
 }
 
 type SessionManager interface {
@@ -91,7 +91,7 @@ func (h *UserHandler) Login(c *gin.Context) {
 
 	h.respondWithToken(c, user, http.StatusOK)
 }
-
+// will be decoupiled in GetUserProfile & GetMyAccount
 func (h *UserHandler) GetMe(c *gin.Context) {
 	auth, err := GetAuthContext(c)
 	if err != nil {
@@ -99,7 +99,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.ToMyPage(c.Request.Context(), auth.UserID)
+	user, err := h.userService.ToMyAccount(c.Request.Context(), auth.UserID)
 	if err != nil {
 		c.JSON(errcode.GetStatusCode(err), app.Fail(err))
 		return

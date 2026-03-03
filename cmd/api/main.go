@@ -11,10 +11,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/panjf2000/ants/v2"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -43,13 +46,20 @@ func main() {
     }
     log.Println("✅ Redisの接続に成功しました！")
 	
+	backfillPool, err := ants.NewPool(config.BackfillPoolSize)
+	if err != nil {
+		slog.Error("ルーチンプールの起動に失敗しました", "err", err)
+		os.Exit(1)
+	}
+	defer backfillPool.Release()
+
 	hasher := crypto.NewBcryptHasher(bcrypt.DefaultCost)
 	tokenmanager := crypto.NewTokenManager()
 	userStore := db.NewPostgresUserStore(database)
 	sessionStore := db.NewRedisSessionStore(rdb)
 	tweetStore := db.NewPostgresTweetStore(database)
 	userCache := cache.NewRedisUserCache(rdb)
-	userRepository := repository.NewUserRepository(userStore, userCache)
+	userRepository := repository.NewUserRepository(userStore, userCache, backfillPool)
 	serviceRepository := repository.NewSessionRepository(sessionStore)
 	userService := service.NewUserService(userRepository, hasher)
 	sessionService := service.NewSessionService(serviceRepository, userService, tokenmanager)

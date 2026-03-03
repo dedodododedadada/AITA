@@ -32,7 +32,7 @@ func (m *mockUserService) Login(ctx context.Context, email, password string) (*d
 	return testutils.SafeGet[dto.UserRecord](args, 0), args.Error(1)
 }
 
-func (m *mockUserService) ToMyPage(ctx context.Context, userID int64) (*dto.UserRecord, error) {
+func (m *mockUserService) ToMyAccount(ctx context.Context, userID int64) (*dto.UserRecord, error) {
 	args := m.Called(ctx, userID)
 	return testutils.SafeGet[dto.UserRecord](args, 0), args.Error(1)
 }

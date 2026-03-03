@@ -14,13 +14,18 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/panjf2000/ants/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
-	userRepository := repository.NewUserRepository(testUserStore, testUserCache)
+	testPool, err := ants.NewPool(10)
+    require.NoError(t, err, "テスト用コルーチンプールの初期化に失敗しました")
+    
+    defer testPool.Release()
+	userRepository := repository.NewUserRepository(testUserStore, testUserCache, testPool)
 	userService := service.NewUserService(userRepository, testHasher)
 	sesseionRepository := repository.NewSessionRepository(testSessionStore)
 	sessionService := service.NewSessionService(sesseionRepository, userService, testTokemanager)
@@ -60,7 +65,7 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 			Token string `json:"session_token"`
 		} `json:"data"`
 	}
-	err := json.Unmarshal(w.Body.Bytes(), &loginResp)
+	err = json.Unmarshal(w.Body.Bytes(), &loginResp)
 	require.NoError(t, err)
 	token := loginResp.Data.Token
 	require.NotEmpty(t, token)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -33,7 +34,7 @@ func(c *redisUserCache) countKey(userID int64)string {
 	return fmt.Sprintf("%s:count:%d", c.prefix, userID)
 }
 
-func (c *redisUserCache) Add(ctx context.Context, info *models.UserCacheInfo, fllwrCount, fllwngCount int64) {
+func (c *redisUserCache) Add(ctx context.Context, info *models.UserInfo, fllwrCount, fllwngCount int64) {
 	dkey := c.dataKey(info.ID)
 	cKey := c.countKey(info.ID)
 	data, _ := json.Marshal(info)
@@ -44,7 +45,7 @@ func (c *redisUserCache) Add(ctx context.Context, info *models.UserCacheInfo, fl
 	pipe.Set(ctx, dkey, data, ttl)
 	pipe.HSet(ctx, cKey, map[string]interface{}{
 		"follower": fllwrCount,
-		"following": fllwrCount,
+		"following": fllwngCount,
 	})
 	
 	pipe.Expire(ctx, cKey, ttl - 30 * time.Minute)
@@ -52,11 +53,22 @@ func (c *redisUserCache) Add(ctx context.Context, info *models.UserCacheInfo, fl
 	_, err := pipe.Exec(ctx)
 
 	if err != nil {
-        fmt.Printf("[Redis Error] ユーザーIDのキャッシュ追加に失敗しました %d: %v\n", info.ID, err)
+        slog.Error("[Redis Error] ユーザーIDのキャッシュ追加に失敗しました", 
+			"user_id", info.ID, 
+			"err", err,
+		)
     }
 }
 
-func(c *redisUserCache) Invalidate(ctx context.Context, userID int64)  {
+func (c *redisUserCache) AddInfoOnly(ctx context.Context, info *models.UserInfo) {
+    dkey := c.dataKey(info.ID)
+    data, _ := json.Marshal(info)
+    ttl := utils.GetRandomExpiration(72 * time.Hour, 1 * time.Hour)
+    
+    c.client.Set(ctx, dkey, data, ttl)
+}
+
+func (c *redisUserCache) Invalidate(ctx context.Context, userID int64)  {
 	dkey := c.dataKey(userID)
 	cKey := c.countKey(userID)
 
@@ -68,11 +80,14 @@ func(c *redisUserCache) Invalidate(ctx context.Context, userID int64)  {
 	_, err := pipe.Exec(ctx)
 	
 	if err != nil {
-        fmt.Printf("[Redis Error] ユーザーIDのキャッシュ削除に失敗しました %d: %v\n", userID, err)
+		slog.Error("[Redis Error] ユーザーIDのキャッシュ削除に失敗しました",
+			"user_id", userID,
+			"err", err,
+		)
     }
 }
 
-func (c *redisUserCache) Get(ctx context.Context, userID int64) (*models.UserCacheInfo, int64, int64, error) {
+func (c *redisUserCache) Get(ctx context.Context, userID int64) (*models.UserInfo, int64, int64, error) {
     dKey := c.dataKey(userID)
     cKey := c.countKey(userID)
 
@@ -82,11 +97,15 @@ func (c *redisUserCache) Get(ctx context.Context, userID int64) (*models.UserCac
     countCmd := pipe.HGetAll(ctx, cKey)
 
     _, err := pipe.Exec(ctx)
-    if err != nil && err != redis.Nil {
+
+	if err == redis.Nil {
+		return nil, 0, 0, redis.Nil
+	}
+    if err != nil {
         return nil, 0, 0, err
     }
 
-    var info models.UserCacheInfo
+    var info models.UserInfo
     dataBytes, err := dataCmd.Bytes()
     if err == nil {
         _ = json.Unmarshal(dataBytes, &info)
@@ -123,4 +142,45 @@ func (c *redisUserCache) Exists(ctx context.Context, userID int64) (bool, error)
     }
 
     return n == 2, nil
+}
+
+func(c *redisUserCache) GetLists(ctx context.Context, userIDs []int64) (map[int64]*models.UserInfo, error) {
+	results := make(map[int64]*models.UserInfo, len(userIDs))
+
+	if len(userIDs) == 0 {
+		return results, nil
+	}
+
+	pipe := c.client.Pipeline()
+
+	cmds := make(map[int64]*redis.StringCmd, len(userIDs))
+	for _, id := range userIDs {
+		if id <= 0 {
+			continue
+		}
+
+		cmds[id] = pipe.Get(ctx, c.dataKey(id))
+	}
+
+	_, _ = pipe.Exec(ctx)
+
+	for id, cmd := range cmds {
+		dataBytes, err := cmd.Bytes()
+		if err != nil {
+			continue
+		}
+
+		var info models.UserInfo
+		if err := json.Unmarshal(dataBytes, &info); err != nil {
+			slog.Error("[Redis Decode エラー]",
+				"user_id", id,
+				"err", err,
+			)
+			continue
+		}
+
+		results[id] = &info
+	}
+
+	return results, nil
 }

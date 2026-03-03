@@ -30,7 +30,7 @@ func (m *mockUserRepository) GetByEmail(ctx context.Context, email string) (*dto
 	return testutils.SafeGet[dto.UserRecord](args,0), args.Error(1)
 }
 
-func (m *mockUserRepository) GetByID(ctx context.Context, userID int64) (*dto.UserRecord, error) {
+func (m *mockUserRepository) GetFullByID(ctx context.Context, userID int64) (*dto.UserRecord, error) {
 	args := m.Called(ctx, userID)
 	return testutils.SafeGet[dto.UserRecord](args,0), args.Error(1)
 }
@@ -47,6 +47,10 @@ func (m *mockUserRepository) Exists(ctx context.Context, id int64) (bool, error)
 	return args.Bool(0), args.Error(1)
 }
 
+func(m *mockUserRepository) GetBaseInfos(ctx context.Context, userIDs []int64) ([]*dto.UserSlimRecord, error) {
+	args := m.Called(ctx, userIDs)
+	return testutils.SafeGetSlice[*dto.UserSlimRecord](args, 0), args.Error(1)
+}
 
 
 type mockSessionRepository struct {

@@ -11,10 +11,12 @@ import (
 type UserRepository interface {
 	Create(ctx context.Context, record *dto.UserRecord) ( *dto.UserRecord, error)
 	GetByEmail(ctx context.Context, email string) (*dto.UserRecord, error) 
-	GetByID(ctx context.Context, userID int64) (*dto.UserRecord, error)
+	GetFullByID(ctx context.Context, userID int64) (*dto.UserRecord, error)
 	IncreaseFollower(ctx context.Context, id int64, delta int64) error 
 	IncreaseFollowing(ctx context.Context, id int64, delta int64) error 
+	
 	Exists(ctx context.Context, id int64) (bool, error)
+	GetBaseInfos(ctx context.Context, userIDs []int64) ([]*dto.UserSlimRecord, error) 
 }
 
 type PasswordHasher interface {
@@ -88,11 +90,11 @@ func (s *userService) Login(ctx context.Context, email, password string) (*dto.U
 	return user, nil
 }
 
-func (s *userService) ToMyPage(ctx context.Context, userID int64) (*dto.UserRecord, error) {
+func (s *userService) ToMyAccount(ctx context.Context, userID int64) (*dto.UserRecord, error) {
 	if userID <= 0 {
 		return nil, errcode.ErrInvalidUserID
 	}
-	user, err := s.userRepository.GetByID(ctx, userID)
+	user, err := s.userRepository.GetFullByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("ユーザー情報の取得に失敗しました: %w", err)
 	}
@@ -136,4 +138,17 @@ func (s *userService) Exists(ctx context.Context, userID int64) (bool, error) {
 	}
 
 	return exist, err
+}
+
+func (s *userService) GetInfoLists(ctx context.Context, userIDs []int64) ([]*dto.UserSlimRecord, error) {
+    if len(userIDs) == 0 {
+        return []*dto.UserSlimRecord{}, nil
+    }
+
+    infos, err := s.userRepository.GetBaseInfos(ctx, userIDs)
+    if err != nil {
+        return nil, fmt.Errorf("Service: ユーザーリストの取得に失敗しました: %w", err) 
+    }
+
+    return infos, nil
 }

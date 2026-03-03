@@ -278,7 +278,7 @@ func TestGetMe(t *testing.T) {
 			},
 			setupMock: func(mu *mockUserService) {
 				user := &dto.UserRecord{ID: 101, Username: "test_user", Email: "test@example.com", FollowerCount: 10, FollowingCount: 20}
-				mu.On("ToMyPage", mock.Anything, int64(101)).Return(user, nil)
+				mu.On("ToMyAccount", mock.Anything, int64(101)).Return(user, nil)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -308,7 +308,7 @@ func TestGetMe(t *testing.T) {
 				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 404, Token: "unexisted_token"})
 			},
 			setupMock: func(mu *mockUserService) {
-				mu.On("ToMyPage", mock.Anything, int64(404)).Return(nil, errcode.ErrUserNotFound)
+				mu.On("ToMyAccount", mock.Anything, int64(404)).Return(nil, errcode.ErrUserNotFound)
 			},
 			expectedStatus: http.StatusNotFound,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {

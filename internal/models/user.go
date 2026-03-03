@@ -14,35 +14,21 @@ type User struct{
 	FollowingCount  int64           `db:"following_count"`
 } 
 
-type UserCacheInfo struct {
-	ID            	int64        	`json:"id"`
-	Username      	string       	`json:"username"`
-	Email         	string       	`json:"email"`
-	PasswordHash  	string       	`json:"password_hash"`
-	CreatedAt     	time.Time    	`json:"created_at"`
+type UserInfo struct {
+	ID            	int64        	`db:"id" json:"id"`
+	Username      	string       	`db:"username" json:"username"`
 }
 
-func (u *User) ToCacheInfo() *UserCacheInfo {
-	return &UserCacheInfo{
+
+
+func (u *User) ToCacheInfo() *UserInfo {
+	return &UserInfo{
 		ID:           u.ID,
 		Username:     u.Username,
-		Email:        u.Email,
-		PasswordHash: u.PasswordHash,
-		CreatedAt:    u.CreatedAt,
 	}
 }
 
-func (c *UserCacheInfo) ToUser(follower, following int64) *User {
-	return &User{
-		ID:             c.ID,
-		Username:       c.Username,
-		Email:          c.Email,
-		PasswordHash:   c.PasswordHash,
-		CreatedAt:      c.CreatedAt,
-		FollowerCount:  follower,
-		FollowingCount: following,
-	}
-}
+
 
 
 

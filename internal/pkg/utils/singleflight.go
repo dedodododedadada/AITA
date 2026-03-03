@@ -20,7 +20,7 @@ func GetDataWithSF[T any](ctx context.Context, sf *singleflight.Group, key strin
 		return zero, ctx.Err()
 	}
 
-	innerCtx, cancel := context.WithTimeout(ctx, 1* time.Second)
+	innerCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	ch := sf.DoChan(key, func() (interface{}, error) {
@@ -28,11 +28,11 @@ func GetDataWithSF[T any](ctx context.Context, sf *singleflight.Group, key strin
 	}) 
 
 	select {
-	case <- innerCtx.Done():
-		if errors.Is(innerCtx.Err(), context.DeadlineExceeded) {
+	case <- ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return zero, fmt.Errorf("AITA SF timeout: %w", innerCtx.Err())
 		}
-		return  zero, innerCtx.Err()
+		return  zero, ctx.Err()
 
 	case res, ok := <-ch:
 		if  !ok {

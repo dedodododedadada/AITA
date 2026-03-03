@@ -9,3 +9,11 @@ func SafeGet[T any](args mock.Arguments, index int) *T {
 	}
 	return val.(*T)
 }
+
+func SafeGetSlice[T any](args mock.Arguments, index int) []T {
+	val := args.Get(index)
+	if val == nil {
+		return nil
+	}
+	return val.([]T)
+}

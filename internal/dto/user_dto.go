@@ -29,6 +29,17 @@ type UserRecord struct {
 	FollowingCount  int64         
 }
 
+type UserPageRecord struct {
+    ID             int64  
+    Username       string 
+    FollowerCount  int64  
+    FollowingCount int64  
+}
+type UserSlimRecord struct {
+	ID            	int64        	
+	Username      	string 
+}
+
 type UserResponse struct {
 	ID        int64     `json:"id"`
 	Username  string    `json:"username"`
@@ -41,9 +52,20 @@ type LoginResponse struct {
 	User         *UserResponse `json:"user"`
 }
 
+
 type UserProfile struct {
 	ID            	int64     `json:"id"`   	
-	Username      	string    `json:"username"`   	       	
+	Username      	string    `json:"username"`  
+	Email     		string    `json:"email"` 	       	
+	FollowerCount 	int64     `json:"follower_count"`   	
+	FollowingCount  int64     `json:"following_count"`  
+	CreatedAt 		time.Time `json:"created_at"`
+}
+
+
+type UserPage struct {
+	ID            	int64     `json:"id"`   	
+	Username      	string    `json:"username"`  	       	
 	FollowerCount 	int64     `json:"follower_count"`   	
 	FollowingCount  int64     `json:"following_count"`  
 }
@@ -121,10 +143,13 @@ func (u *UserRecord)ToUserProfile() *UserProfile {
 	return &UserProfile{
 		ID:        		u.ID,
 		Username:  		u.Username,
+		Email:          u.Email,
 		FollowerCount: 	u.FollowerCount,
 		FollowingCount: u.FollowingCount,
+		CreatedAt:      u.CreatedAt,
 	}
 }
+
 func NewUserRecord(user *models.User) *UserRecord {
 	if user == nil {
 		return nil
@@ -139,4 +164,28 @@ func NewUserRecord(user *models.User) *UserRecord {
 		FollowerCount: user.FollowerCount,
 		FollowingCount: user.FollowingCount,
 	}
+}
+
+func NewUserSlimRecord(info *models.UserInfo) *UserSlimRecord {
+	if info == nil {
+		return nil
+	}
+	
+	return &UserSlimRecord{
+		ID: info.ID,
+		Username: info.Username,
+	}
+}
+
+func NewUserPageRecord(info *models.UserInfo, followersCount, followingsCount int64) *UserPageRecord {
+	if info == nil || followersCount < 0 || followingsCount < 0 {
+		return nil
+	}
+
+	return &UserPageRecord{
+		ID: info.ID,
+		Username: info.Username,
+		FollowerCount: followersCount,
+		FollowingCount: followingsCount,
+	} 
 }

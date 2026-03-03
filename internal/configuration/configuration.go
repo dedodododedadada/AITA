@@ -1,10 +1,11 @@
 package configuration
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -36,18 +37,20 @@ func GetPath(relPath string) string {
 }
 
 type Config struct{
-	DBConnStr        string
-	ServerAddress    string
-	AppEnv           string
-	RedisHost        string
-	RedisPort        string
-	RedisPassword    string
+	DBConnStr        	string
+	ServerAddress    	string
+	AppEnv           	string
+	RedisHost        	string
+	RedisPort        	string
+	RedisPassword    	string
+	BackfillPoolSize 	int
 }
 
 func LoadConfig() *Config{
 	envPath := GetPath(".env")
 	if err := godotenv.Load(envPath); err != nil {
-		log.Fatal("エラー :.envが見つかりません")
+		slog.Error("エラー :.envが見つかりません")
+		os.Exit(1)
 	}
 
 	appEnv := os.Getenv("APP_ENV")
@@ -58,38 +61,43 @@ func LoadConfig() *Config{
 	var dbURL string
 	if appEnv== "test" {
         dbURL = os.Getenv("DB_TEST_URL")
-		log.Println("DB_TEST_URLに切り替えます")
+		slog.Info("DB_TEST_URLに切り替えます")
     } else {
 		dbURL = os.Getenv("DB_URL")
 	}
 
-	if dbURL == "" {
-		log.Fatal("エラー: 環境変数 DB_URL が設定されていません")
+	poolSizeStr := os.Getenv("BACKFILL_POOL_SIZE")
+	poolSize, err := strconv.Atoi(poolSizeStr)
+
+	if err != nil || poolSize <= 0 {
+		poolSize = 100
 	}
 
-	redisHost := os.Getenv("REDIS_HOST")
-	if redisHost == "" {
-		log.Fatal("エラー: redisHostが見つかりません")
-	}
-
-	redisPort := os.Getenv("REDIS_PORT")
-	if redisPort == "" {
-		log.Fatal("エラー: redisPortが見つかりません")
-	}
-
-	redisPassword := os.Getenv("REDIS_PASSWORD")
-	if redisPassword == "" {
-		log.Fatal("エラー: redisPasswordが見つかりません")
-	}
-
-	return &Config{
+	cfg := &Config{
 		DBConnStr:     dbURL,
 		ServerAddress: ":8080",
 		AppEnv:        appEnv,
-		RedisHost:     redisHost,
-		RedisPort:     redisPort,
+		RedisHost:     os.Getenv("REDIS_HOST"),
+		RedisPort:     os.Getenv("REDIS_PORT"),
 		RedisPassword: os.Getenv("REDIS_PASSWORD"),
+		BackfillPoolSize: poolSize,
 	}
+
+	requiredFields := map[string]string{
+        "DB_URL":         cfg.DBConnStr,
+        "REDIS_HOST":     cfg.RedisHost,
+        "REDIS_PORT":     cfg.RedisPort,
+        "REDIS_PASSWORD": cfg.RedisPassword,
+    }
+
+	for key, val := range requiredFields {
+        if val == "" {
+            slog.Error("エラー: パラメーターが見つかりません", "key", key)
+            os.Exit(1) 
+        }
+    }
+
+	return cfg
 }
 
 

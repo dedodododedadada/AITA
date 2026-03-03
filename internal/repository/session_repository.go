@@ -48,7 +48,7 @@ func (r *sessionRepository) Get(ctx context.Context, tokenHash string) (*dto.Ses
 	}
 
 	if session == nil {
-		return nil, errcode.ErrInternal
+		return nil, errcode.ErrSessionNotFound
 	}
 
 	return dto.ToSessionRecord(session), nil
