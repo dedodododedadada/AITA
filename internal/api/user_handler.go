@@ -41,7 +41,7 @@ func (h *UserHandler) respondWithToken(c *gin.Context, user *dto.UserRecord, sta
 		return
 	}
 
-	loginData := dto.LoginResponse{
+	loginData := app.LoginResponse{
 		SessionToken: response.Token,
 		User:         user.ToUserResponse(),
 	}
@@ -49,7 +49,7 @@ func (h *UserHandler) respondWithToken(c *gin.Context, user *dto.UserRecord, sta
 }
 
 func (h *UserHandler) SignUp(c *gin.Context) {
-	var req dto.SignupRequest
+	var req app.SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		appErr := errcode.FilterBindError(err)
 		c.JSON(errcode.GetStatusCode(appErr), app.Fail(appErr))
@@ -71,7 +71,7 @@ func (h *UserHandler) SignUp(c *gin.Context) {
 }
 
 func (h *UserHandler) Login(c *gin.Context) {
-	var req dto.LoginRequest
+	var req app.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		appErr := errcode.FilterBindError(err)
 		c.JSON(errcode.GetStatusCode(appErr), app.Fail(appErr))

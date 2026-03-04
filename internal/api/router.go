@@ -7,6 +7,7 @@ import (
 func SetupRouter(
 	userHandler *UserHandler, 
 	tweetHandler *TweetHandler, 
+	followHandler *FollowHandler,
 	sessionService AuthSessionService ,
 ) *gin.Engine {
 	router := gin.Default()
@@ -19,6 +20,7 @@ func SetupRouter(
 		v1.POST("/signup", userHandler.SignUp)
 		v1.POST("/login", userHandler.Login)
 		v1.GET("/tweets/:id", tweetHandler.Get)
+	
 		protected := v1.Group("/")
 		protected.Use(AuthMiddleware(sessionService))
 		{
@@ -29,6 +31,19 @@ func SetupRouter(
 				tweets.POST("", tweetHandler.Create)
 				tweets.PATCH("/:id", tweetHandler.Update)  
                 tweets.DELETE("/:id", tweetHandler.Delete)
+				
+			}
+			relation := protected.Group("/relation")
+			{
+				relation.POST("/follow", followHandler.Follow)      
+				relation.POST("/unfollow", followHandler.UnFollow)  
+				relation.GET("/status/:id", followHandler.GetRelation) 
+			}
+
+			users := protected.Group("/users/:id")
+			{
+    			users.GET("/followers", followHandler.GetFollowers)
+    			users.GET("/followings", followHandler.GetFollowings)
 			}
 		} 
 	}

@@ -3,6 +3,7 @@ package service
 import (
 	"aita/internal/dto"
 	"aita/internal/errcode"
+	"aita/internal/pkg/app"
 	"context"
 	"fmt"
 	"testing"
@@ -17,13 +18,13 @@ import (
 func TestRegister(t *testing.T) {
     gin.SetMode(gin.TestMode)
     tests := map[string]struct {
-        inputBody *dto.SignupRequest
+        inputBody *app.SignupRequest
         setupMock func(mu *mockUserRepository, mh *mockBcryptHasher)
         wantedErr error
         errMsg    string
     }{
         "登録成功": {
-            inputBody: &dto.SignupRequest{
+            inputBody: &app.SignupRequest{
                 Username: "mock_user",
                 Email:    "mock@example.com",
                 Password: "password101",
@@ -43,7 +44,7 @@ func TestRegister(t *testing.T) {
             wantedErr: nil,
         },
         "必須項目が不足": {
-            inputBody: &dto.SignupRequest{
+            inputBody: &app.SignupRequest{
                 Username: "mock_user",
                 Email:    "mock@example.com",
                 Password: "", 
@@ -52,7 +53,7 @@ func TestRegister(t *testing.T) {
             wantedErr: errcode.ErrRequiredFieldMissing,
         },
         "パスワードをハッシュ化に失敗": {
-            inputBody: &dto.SignupRequest{
+            inputBody: &app.SignupRequest{
                 Username: "mock_user",
                 Email:    "mock@example.com",
                 Password: "password101",
@@ -64,7 +65,7 @@ func TestRegister(t *testing.T) {
             errMsg:    "パスワードをハッシュ化に失敗しました",
         },
         "データベース内部エラー": {
-            inputBody: &dto.SignupRequest{
+            inputBody: &app.SignupRequest{
                 Username: "mock_user",
                 Email:    "mock@example.com",
                 Password: "password101",

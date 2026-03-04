@@ -29,7 +29,7 @@ func TestSignUp(t *testing.T) {
 	}{
 		{
 			name: "ユーザー登録成功",
-			requestBody: dto.SignupRequest{
+			requestBody: app.SignupRequest{
 				Username: "mock_user",
 				Email:    "taro@example.com",
 				Password: "password123",
@@ -78,7 +78,7 @@ func TestSignUp(t *testing.T) {
 		},
 		{
 			name: "バリデーションエラー：メールアドレス重複",
-			requestBody: dto.SignupRequest{
+			requestBody: app.SignupRequest{
 				Username: "mock_user",
 				Email:    "exists@example.com",
 				Password: "password123",
@@ -97,7 +97,7 @@ func TestSignUp(t *testing.T) {
 		},
 		{
 			name: "セッション発行失敗",
-			requestBody: dto.SignupRequest{
+			requestBody: app.SignupRequest{
 				Username: "error_user",
 				Email:    "issue_fail@test.com",
 				Password: "password123",
@@ -166,7 +166,7 @@ func TestLogin(t *testing.T) {
 	}{
 		{
 			name: "ログイン成功",
-			requestBody: dto.LoginRequest{
+			requestBody: app.LoginRequest{
 				Email:    "test@example.com",
 				Password: "password123",
 			},
@@ -200,7 +200,7 @@ func TestLogin(t *testing.T) {
 		},
 		{
 			name: "メールアドレスまたはパスワードが間違っている場合",
-			requestBody: dto.LoginRequest{
+			requestBody: app.LoginRequest{
 				Email:    "wrong@example.com",
 				Password: "wrongpassword",
 			},
@@ -217,7 +217,7 @@ func TestLogin(t *testing.T) {
 		},
 		{
 			name: "トークン発行失敗",
-			requestBody: dto.LoginRequest{
+			requestBody: app.LoginRequest{
 				Email:    "test@example.com",
 				Password: "password123",
 			},

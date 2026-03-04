@@ -1,7 +1,36 @@
 package app
 
-import "aita/internal/errcode"
+import (
+	"aita/internal/errcode"
+	"time"
+)
 
+
+type UserResponse struct {
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type LoginResponse struct {
+	SessionToken string        `json:"session_token"`
+	User         *UserResponse `json:"user"`
+}
+
+type FollowResponse struct {
+	FollowerID  int64    	`json:"follower_id"`
+	FollowingID int64       `json:"following_id"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+type RelationResponse struct {
+    MeID       int64 `json:"me_id"`       
+    TargetID   int64 `json:"target_id"`   
+    Following  bool  `json:"following"`    
+    FollowedBy bool  `json:"followed_by"`  
+    IsMutual   bool  `json:"is_mutual"`   
+}
 type Response struct {
 	Data    any    `json:"data,omitempty"`
 	Message string `json:"message,omitempty"`
@@ -9,6 +38,7 @@ type Response struct {
 	Code    string `json:"code,omitempty"`
 	Meta    any    `json:"meta,omitempty"`
 }
+
 
 func Fail(err error) Response {
 	return Response{

@@ -58,16 +58,22 @@ func main() {
 	userStore := db.NewPostgresUserStore(database)
 	sessionStore := db.NewRedisSessionStore(rdb)
 	tweetStore := db.NewPostgresTweetStore(database)
+	followStore := db.NewPostgresFollowStore(database)
 	userCache := cache.NewRedisUserCache(rdb)
+	followCache := cache.NewRedisFollowCache(rdb)
 	userRepository := repository.NewUserRepository(userStore, userCache, backfillPool)
 	serviceRepository := repository.NewSessionRepository(sessionStore)
+	followRepository := repository.NewFollowRepository(followStore, followCache, backfillPool)
 	userService := service.NewUserService(userRepository, hasher)
 	sessionService := service.NewSessionService(serviceRepository, userService, tokenmanager)
 	tweetService := service.NewTweetService(tweetStore)
+	followService := service.NewFollowService(followRepository, userService)
+
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
+	followHandler := api.NewFollowHandler(followService)
 
-	router := api.SetupRouter(userHandler, tweetHandler, sessionService)
+	router := api.SetupRouter(userHandler, tweetHandler, followHandler, sessionService)
 
 
 	log.Printf("サーバーが起動し、ポート%sで待機中です",config.ServerAddress)

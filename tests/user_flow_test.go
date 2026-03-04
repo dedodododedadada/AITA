@@ -2,7 +2,7 @@ package tests
 
 import (
 	"aita/internal/api"
-	"aita/internal/dto"
+	"aita/internal/pkg/app"
 	"aita/internal/repository"
 	"aita/internal/service"
 	"bytes"
@@ -26,16 +26,19 @@ func TestUserLifeCycleIntegration(t *testing.T) {
     
     defer testPool.Release()
 	userRepository := repository.NewUserRepository(testUserStore, testUserCache, testPool)
-	userService := service.NewUserService(userRepository, testHasher)
 	sesseionRepository := repository.NewSessionRepository(testSessionStore)
+	followRepository := repository.NewFollowRepository(testFollowStore, testFollowCache, testPool)
+	userService := service.NewUserService(userRepository, testHasher)
 	sessionService := service.NewSessionService(sesseionRepository, userService, testTokemanager)
+	followService := service.NewFollowService(followRepository, userService)
 	tweetService := service.NewTweetService(testTweetStore)
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
+	followHandler := api.NewFollowHandler(followService)
 
 	gin.SetMode(gin.TestMode)
-	r := api.SetupRouter(userHandler, tweetHandler, sessionService)
-	signupPayload := dto.SignupRequest{
+	r := api.SetupRouter(userHandler, tweetHandler, followHandler,sessionService)
+	signupPayload := app.SignupRequest{
 		Username: "frontend_dev",
 		Email:    "dev@aita.com",
 		Password: "password123",
@@ -50,7 +53,7 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "frontend_dev")
 	assert.Contains(t, w.Body.String(), "dev@aita.com")
 
-	loginPayload := dto.LoginRequest{
+	loginPayload := app.LoginRequest{
 		Email:    "dev@aita.com",
 		Password: "password123",
 	}
@@ -58,6 +61,7 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	w = httptest.NewRecorder()
 	req, _ = http.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewBuffer(jsonLogin))
 	r.ServeHTTP(w, req)
+	log.Printf("%s", w.Body.String())
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var loginResp struct {

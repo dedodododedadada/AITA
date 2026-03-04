@@ -100,6 +100,7 @@ func(r *userRepository) GetFullByID(ctx context.Context, userID int64) (*dto.Use
 
 	return dto.NewUserRecord(user), nil
 }
+
 func (r *userRepository) GetProfByID(ctx context.Context, userID int64) (*dto.UserPageRecord, error) {
     info, frc, fgc, err := r.userCache.Get(ctx, userID)
     if err == nil && info != nil {
@@ -125,6 +126,9 @@ func (r *userRepository) GetProfByID(ctx context.Context, userID int64) (*dto.Us
         r.userCache.Add(backfillCtx, user.ToCacheInfo(), user.FollowerCount, user.FollowingCount)
     })
 
+	if err != nil {
+		slog.Warn("ants pool へのタスク投入失敗。プロフィールのバックフィルをスキップします。", "userID", userID, "err", err)
+    }
 
     return &dto.UserPageRecord{
 		ID: user.ID,

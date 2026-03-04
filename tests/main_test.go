@@ -16,7 +16,9 @@ import (
 
 var (
 	testUserStore    repository.Userstore  
-	testUserCache    repository.UserCache    
+	testUserCache    repository.UserCache 
+	testFollowStore  repository.FollowStore
+	testFollowCache  repository.FollowCache
 	testSessionStore repository.SessionStore
 	testTweetStore   service.TweetStore
 	testTokemanager  service.TokenManager
@@ -32,9 +34,11 @@ func TestMain(m *testing.M) {
 	testHasher = crypto.NewBcryptHasher(bcrypt.DefaultCost)
 	testTokemanager = crypto.NewTokenManager()
 	testUserCache = cache.NewRedisUserCache(testContext.TestRDB)
+	testFollowCache = cache.NewRedisFollowCache(testContext.TestRDB)
 	testUserStore = db.NewPostgresUserStore(testContext.TestDB)
 	testSessionStore = db.NewRedisSessionStore(testContext.TestRDB)
 	testTweetStore = db.NewPostgresTweetStore(testContext.TestDB)
+	testFollowStore = db.NewPostgresFollowStore(testContext.TestDB)
 	
 	
     testContext.CleanupTestDB()

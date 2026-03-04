@@ -9,6 +9,11 @@ type Follow struct {
 	CreatedAt       time.Time   `db:"created_at"`
 }
 
+type CacheMember struct {
+    Member int64
+    Score  float64
+}
+
 type RelationShip struct {
 	Following  bool `db:"following"`
 	FollowedBy bool `db:"followed_by"`
