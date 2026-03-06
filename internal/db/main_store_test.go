@@ -10,7 +10,7 @@ import (
 
 var (
     testUserStore    *postgresUserStore
-    testSessionStore *postgresSessionStore
+    testSessionStore *redisSessionStore
     testTweetStore   *postgresTweetStore
 	testFollowStore  *postgresFollowStore
     testContext      *testutils.TestContext 
@@ -21,7 +21,7 @@ func TestMain(m *testing.M) {
 	testContext, teardown = testutils.RunTestMain(m)
     log.Println("Migration successful!")
 	testUserStore = NewPostgresUserStore(testContext.TestDB)
-	testSessionStore = NewPostgresSessionStore(testContext.TestDB)
+	testSessionStore = NewRedisSessionStore(testContext.TestRDB)
 	testTweetStore = NewPostgresTweetStore(testContext.TestDB)
 	testFollowStore = NewPostgresFollowStore(testContext.TestDB)
 	testContext.CleanupTestDB()

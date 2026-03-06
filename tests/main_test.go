@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	testUserStore    repository.Userstore  
+	testUserStore    repository.UserStore  
 	testUserCache    repository.UserCache 
 	testFollowStore  repository.FollowStore
 	testFollowCache  repository.FollowCache

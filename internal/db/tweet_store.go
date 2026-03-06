@@ -13,11 +13,15 @@ import (
 )
 
 type postgresTweetStore struct {
-	database *sqlx.DB
+	BaseStore
 }
 
 func NewPostgresTweetStore(db *sqlx.DB) *postgresTweetStore {
-	return &postgresTweetStore{database: db}
+	return &postgresTweetStore{
+		BaseStore: BaseStore{
+			database: db,
+		},
+	}
 }
 
 func (s *postgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Tweet) (*models.Tweet, error) {
@@ -26,7 +30,7 @@ func (s *postgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Twee
 		VALUES($1, $2, $3)
 		RETURNING id, user_id, content, image_url, created_at, updated_at, is_edited`
 	var newTweet models.Tweet
-	err := s.database.QueryRowContext(
+	err := s.BaseStore.conn(ctx).QueryRowContext(
 		ctx,
 		query,
 		tweet.UserID,
@@ -64,7 +68,7 @@ func (s *postgresTweetStore) CreateTweet(ctx context.Context, tweet *models.Twee
 func (s *postgresTweetStore) GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error) {
 	query := `SELECT user_id, content, image_url, created_at, updated_at, is_edited FROM tweets WHERE id = $1`
 	var wantedTweet models.Tweet
-	err := s.database.GetContext(ctx, &wantedTweet, query, tweetID)
+	err := s.BaseStore.conn(ctx).GetContext(ctx, &wantedTweet, query, tweetID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errcode.ErrTweetNotFound
@@ -82,7 +86,7 @@ func (s *postgresTweetStore) UpdateContent(ctx context.Context, newContent strin
 		WHERE id = $2 AND content <> $1 
 		RETURNING id, user_id, content, image_url, created_at, updated_at, is_edited`
 	var updatedTweet models.Tweet
-	err := s.database.GetContext(ctx, &updatedTweet, query, newContent, tweetID)
+	err :=s.BaseStore.conn(ctx).GetContext(ctx, &updatedTweet, query, newContent, tweetID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errcode.ErrTweetNotFound
@@ -103,7 +107,7 @@ func (s *postgresTweetStore) UpdateContent(ctx context.Context, newContent strin
 
 func (s *postgresTweetStore) DeleteTweet(ctx context.Context, tweetID int64) error {
 	query := `DELETE FROM tweets WHERE id = $1`
-	result, err := s.database.ExecContext(ctx, query, tweetID)
+	result, err := s.BaseStore.conn(ctx).ExecContext(ctx, query, tweetID)
 	if err != nil {
 		return fmt.Errorf("ツイートの削除に失敗しました: %w", err)
 	}
@@ -118,4 +122,35 @@ func (s *postgresTweetStore) DeleteTweet(ctx context.Context, tweetID int64) err
 	}
 
 	return nil
+}
+
+
+func (s *postgresTweetStore) GetTweetsByIDs(ctx context.Context, tweetIDs []int64) ([]*models.Tweet, error) {
+	if len(tweetIDs) == 0 {
+		return []*models.Tweet{}, nil
+	}
+
+	if len(tweetIDs) > 500 {
+		return nil, fmt.Errorf("tweetIDsが大きすぎます(count:%d)", len(tweetIDs))
+	}
+
+	query := `SELECT id, 
+		user_id, 
+		content, 
+		image_url, 
+		created_at, 
+		updated_at, 
+		is_edited
+		FROM tweets
+		WHERE id = ANY($1)`
+	
+	var tweets []*models.Tweet
+
+	err := s.BaseStore.conn(ctx).SelectContext(ctx, &tweets, query, pq.Array(tweetIDs))
+
+	if err != nil {
+		return nil, fmt.Errorf("IDによるtweets取得に失敗しました(count:%d); %w", len(tweetIDs),err)
+	}
+
+	return tweets, nil
 }

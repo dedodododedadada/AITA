@@ -3,9 +3,11 @@ package models
 import(
 	"time"
 )
+
 const(
 	editwindow = 10 * time.Minute
 )
+
 type Tweet struct{
 	ID            int64        `db:"id"`
 	UserID        int64		   `db:"user_id"`

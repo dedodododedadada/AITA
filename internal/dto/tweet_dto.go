@@ -30,6 +30,16 @@ type TweetResponse struct{
 	IsEdited      bool         `json:"is_edited"`
 }
 
+type TweetRecord struct {
+	ID            int64        
+	UserID        int64		   
+	Content       string      
+	ImageURL     *string      
+	CreatedAt     time.Time   
+	UpdatedAt     time.Time   
+	IsEdited      bool         
+}
+
 func (r *CreateTweetRequest) Validate() error {
     r.Content = strings.TrimSpace(r.Content)
     if r.Content == "" {
@@ -69,5 +79,38 @@ func NewTweetResponse(tweet *models.Tweet) TweetResponse {
 		CreatedAt:  tweet.CreatedAt,
 		UpdatedAt:  tweet.UpdatedAt,
 		IsEdited:   tweet.IsEdited,
+	}
+}
+
+
+func (tr *TweetRecord)ToModel() *models.Tweet {
+	if tr == nil {
+		return &models.Tweet{}
+	}
+
+	return &models.Tweet{
+		ID: tr.ID,
+		UserID: tr.UserID,
+		Content: tr.Content,
+		ImageURL: tr.ImageURL,
+		CreatedAt: tr.CreatedAt,
+		UpdatedAt: tr.UpdatedAt,
+		IsEdited: tr.IsEdited,
+	}
+}
+
+func NewTweetRecord(tweet *models.Tweet) *TweetRecord {
+	if tweet == nil {
+		return &TweetRecord{}
+	}
+
+	return &TweetRecord{
+		ID: tweet.ID,
+		UserID: tweet.UserID,
+		Content: tweet.Content,
+		ImageURL: tweet.ImageURL,
+		CreatedAt: tweet.CreatedAt,
+		UpdatedAt: tweet.UpdatedAt,
+		IsEdited: tweet.IsEdited,
 	}
 }

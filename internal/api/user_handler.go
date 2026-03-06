@@ -12,13 +12,13 @@ import (
 )
 
 type UserService interface {
-	Register(ctx context.Context, username, email,password string) (*dto.UserRecord, error)
-	Login(ctx context.Context, email, password string) (*dto.UserRecord, error) 
-	ToMyAccount(ctx context.Context, userID int64) (*dto.UserRecord, error) 
+	Register(ctx context.Context, username, email, password string) (*dto.UserRecord, error)
+	Login(ctx context.Context, email, password string) (*dto.UserRecord, error)
+	ToMyAccount(ctx context.Context, userID int64) (*dto.UserRecord, error)
 }
 
 type SessionManager interface {
-	Issue(ctx context.Context, userID int64) (*dto.SessionResponse, error)
+	Issue(ctx context.Context, userID int64) (*dto.AuthRecord, error)
 	Revoke(ctx context.Context, userID int64, token string) error
 }
 
@@ -91,6 +91,7 @@ func (h *UserHandler) Login(c *gin.Context) {
 
 	h.respondWithToken(c, user, http.StatusOK)
 }
+
 // will be decoupiled in GetUserProfile & GetMyAccount
 func (h *UserHandler) GetMe(c *gin.Context) {
 	auth, err := GetAuthContext(c)

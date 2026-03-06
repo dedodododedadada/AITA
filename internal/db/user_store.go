@@ -131,13 +131,16 @@ func (s *postgresUserStore) IncreaseFollowingCount(ctx context.Context, userID, 
 }
 
 func (s *postgresUserStore) GetNamesByIDs(ctx context.Context, userIDs []int64) ([]*models.UserInfo, error) {
+	if len(userIDs) == 0 {
+   		return []*models.UserInfo{}, nil
+	}
 	if len(userIDs) > 500 {
 		return nil, fmt.Errorf("userIDsが大きすぎます(count:%d)", len(userIDs))
 	}
 	
 	query := `SELECT id, username FROM users WHERE id = ANY($1)`
 
-	var rows [] *models.UserInfo
+	var rows []*models.UserInfo
 	err := s.BaseStore.conn(ctx).SelectContext(ctx, &rows, query, pq.Array(userIDs))
 
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"aita/internal/pkg/utils"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -34,21 +35,21 @@ func(c *redisUserCache) countKey(userID int64)string {
 	return fmt.Sprintf("%s:count:%d", c.prefix, userID)
 }
 
-func (c *redisUserCache) Add(ctx context.Context, info *models.UserInfo, fllwrCount, fllwngCount int64) {
+func (c *redisUserCache) Add(ctx context.Context, info *models.UserInfo, fllwrCount, fllwngCount int64) error {
 	dkey := c.dataKey(info.ID)
 	cKey := c.countKey(info.ID)
 	data, _ := json.Marshal(info)
 
-	ttl := utils.GetRandomExpiration(72 * time.Hour, 1 * time.Hour)
+	ttl := utils.GetRandomExpiration(72*time.Hour, 3*time.Hour)
+	
 	pipe := c.client.Pipeline()
-
 	pipe.Set(ctx, dkey, data, ttl)
 	pipe.HSet(ctx, cKey, map[string]interface{}{
 		"follower": fllwrCount,
 		"following": fllwngCount,
 	})
 	
-	pipe.Expire(ctx, cKey, ttl - 30 * time.Minute)
+	pipe.Expire(ctx, cKey, ttl - 30*time.Minute)
 
 	_, err := pipe.Exec(ctx)
 
@@ -58,14 +59,26 @@ func (c *redisUserCache) Add(ctx context.Context, info *models.UserInfo, fllwrCo
 			"err", err,
 		)
     }
+
+	return err
 }
 
 func (c *redisUserCache) AddInfoOnly(ctx context.Context, info *models.UserInfo) {
     dkey := c.dataKey(info.ID)
-    data, _ := json.Marshal(info)
-    ttl := utils.GetRandomExpiration(72 * time.Hour, 1 * time.Hour)
+    data, err := json.Marshal(info)
+	if err != nil {
+        slog.Error("[Redis Error] ユーザー情報のシリアライズに失敗しました", "user_id", info.ID, "err", err)
+        return
+    }
+    ttl := utils.GetRandomExpiration(72*time.Hour, 3*time.Hour)
     
-    c.client.Set(ctx, dkey, data, ttl)
+	err = c.client.Set(ctx, dkey, data, ttl).Err()
+    if err != nil {
+        slog.Error("[Redis Error] ユーザー情報のみのキャッシュ追加に失敗しました", 
+            "user_id", info.ID, 
+            "err", err,
+        )
+    }
 }
 
 func (c *redisUserCache) Invalidate(ctx context.Context, userID int64)  {
@@ -98,17 +111,25 @@ func (c *redisUserCache) Get(ctx context.Context, userID int64) (*models.UserInf
 
     _, err := pipe.Exec(ctx)
 
-	if err == redis.Nil {
-		return nil, 0, 0, redis.Nil
-	}
-    if err != nil {
+	if err != nil {
+        if errors.Is(err, redis.Nil) {
+            return nil, 0, 0, redis.Nil
+        }
+        slog.Error("[Redis Error] ユーザーデータの取得に失敗しました",
+            "user_id", userID,
+            "err", err,
+        )
         return nil, 0, 0, err
     }
-
     var info models.UserInfo
     dataBytes, err := dataCmd.Bytes()
     if err == nil {
-        _ = json.Unmarshal(dataBytes, &info)
+   		if err := json.Unmarshal(dataBytes, &info); err != nil {
+            slog.Warn("[Redis Decode Error] JSONのデコードに失敗しました",
+                "user_id", userID,
+                "err", err,
+            )
+        }
     }
 	
     counts := countCmd.Val()
@@ -124,12 +145,30 @@ func (c *redisUserCache) Get(ctx context.Context, userID int64) (*models.UserInf
 
 func (c *redisUserCache) IncrFollower(ctx context.Context, userID int64, delta int64) error {
     cKey := c.countKey(userID)
-    return c.client.HIncrBy(ctx, cKey, "follower", delta).Err()
+    err :=  c.client.HIncrBy(ctx, cKey, "follower", delta).Err()
+	if err != nil {
+        slog.Error("[Redis Error] フォロワー数のインクリメントに失敗しました",
+            "user_id", userID,
+            "delta", delta,
+            "err", err,
+        )
+    }
+
+	return err
 }
 
 func (c *redisUserCache) IncrFollowing(ctx context.Context, userID int64, delta int64) error {
     cKey := c.countKey(userID)
-    return c.client.HIncrBy(ctx, cKey, "following", delta).Err()
+    err :=  c.client.HIncrBy(ctx, cKey, "following", delta).Err()
+	if err != nil {
+        slog.Error("[Redis Error] フォロウィング数のインクリメントに失敗しました",
+            "user_id", userID,
+            "delta", delta,
+            "err", err,
+        )
+    }
+
+	return err
 }
 
 func (c *redisUserCache) Exists(ctx context.Context, userID int64) (bool, error) {
@@ -138,6 +177,10 @@ func (c *redisUserCache) Exists(ctx context.Context, userID int64) (bool, error)
 
     n, err := c.client.Exists(ctx, dKey, cKey).Result()
     if err != nil {
+        slog.Error("[Redis Error] ユーザーの存在確認に失敗しました", 
+            "user_id", userID, 
+            "err", err,
+        )
         return false, err
     }
 
@@ -162,7 +205,18 @@ func(c *redisUserCache) GetLists(ctx context.Context, userIDs []int64) (map[int6
 		cmds[id] = pipe.Get(ctx, c.dataKey(id))
 	}
 
-	_, _ = pipe.Exec(ctx)
+	_, err := pipe.Exec(ctx)
+
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return results, redis.Nil
+		}
+        slog.Warn("[Redis Error] ユーザーリストの取得に失敗しました",
+            "count", len(userIDs),
+            "err", err,
+        )
+        return nil, err
+    }
 
 	for id, cmd := range cmds {
 		dataBytes, err := cmd.Bytes()
@@ -172,7 +226,7 @@ func(c *redisUserCache) GetLists(ctx context.Context, userIDs []int64) (map[int6
 
 		var info models.UserInfo
 		if err := json.Unmarshal(dataBytes, &info); err != nil {
-			slog.Error("[Redis Decode エラー]",
+			slog.Error("[Redis Decode Error] ユーザー情報のデコードに失敗しました",
 				"user_id", id,
 				"err", err,
 			)
@@ -183,4 +237,43 @@ func(c *redisUserCache) GetLists(ctx context.Context, userIDs []int64) (map[int6
 	}
 
 	return results, nil
+}
+
+
+func (c *redisUserCache) AddLists(ctx context.Context, infos []*models.UserInfo) error {
+    if len(infos) == 0 {
+        return nil
+    }
+
+    pipe := c.client.Pipeline()
+    count := 0
+
+    for _, info := range infos {
+        if info == nil { continue }
+
+        data, err := json.Marshal(info)
+        if err != nil {
+            slog.Error("[Redis Error] ユーザー情報のシリアライズに失敗しました",
+                "user_id", info.ID, "err", err,
+            )
+            continue
+        }
+
+        key := c.dataKey(info.ID)
+        ttl := utils.GetRandomExpiration(72*time.Hour, 3*time.Hour)
+
+        pipe.SetNX(ctx, key, data, ttl)
+        count++
+    }
+
+    if count == 0 { return nil }
+
+    _, err := pipe.Exec(ctx)
+    if err != nil {
+        slog.Error("[Redis Error] ユーザーリストのキャッシュ一括追加に失敗しました",
+            "count", len(infos), "err", err,
+        )
+        return err
+    }
+    return nil
 }

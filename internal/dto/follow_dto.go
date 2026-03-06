@@ -52,6 +52,13 @@ func (r *FollowRecord) ToFollowResponse() *app.FollowResponse {
 }
 
 func (r *RelationRecord) ToRelationResponse(userID, targetID int64) *app.RelationResponse {
+	if r == nil {
+		return &app.RelationResponse{
+			MeID: userID,
+			TargetID: targetID,
+		}
+	}
+	
 	return &app.RelationResponse{
 		MeID: userID,
 		TargetID: targetID,

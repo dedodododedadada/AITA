@@ -12,9 +12,9 @@ import (
 )
 
 type AuthSessionService interface {
-	Validate(ctx context.Context, token string) (*dto.SessionResponse, error)
+	Validate(ctx context.Context, token string) (*dto.AuthRecord, error)
 	ShouldRefresh(expiresAt, createdAt time.Time) (bool, error)
-	RefreshAsync(token string) 
+	RefreshAsync(token string)
 }
 
 func AuthMiddleware(svc AuthSessionService) gin.HandlerFunc {
@@ -33,12 +33,12 @@ func AuthMiddleware(svc AuthSessionService) gin.HandlerFunc {
 		}
 
 		if should, _ := svc.ShouldRefresh(response.ExpiresAt, response.CreatedAt); should {
-            svc.RefreshAsync(token)
-        } 
+			svc.RefreshAsync(token)
+		}
 
-		c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext {
+		c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{
 			UserID: response.UserID,
-			Token: response.Token,
+			Token:  response.Token,
 		})
 
 		c.Next()

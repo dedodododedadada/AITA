@@ -26,13 +26,12 @@ type FollowCache interface {
 	Add(ctx context.Context, followerID, followingID int64, score float64) error
 	AddFollowings(ctx context.Context, followerID int64, sets []*models.CacheMember) error
 	AddFollowers(ctx context.Context, followingID int64, sets []*models.CacheMember) error
-	Exists(ctx context.Context, userID int64, IsFollowing bool) (bool, error)
 	GetRelation(ctx context.Context, followerID, followingID int64) (isFollowing, isFollowed bool, err error)
-	GetFollowingIDs(ctx context.Context, userID int64) ([]int64, error)
-    GetFollowerIDs(ctx context.Context, userID int64) ([]int64, error)
+	FindFollowingIDs(ctx context.Context, userID int64) ([]int64, error) 
+    FindFollowerIDs(ctx context.Context, userID int64) ([]int64,  error) 
 	InvalidatePair(ctx context.Context, followerID, followingID int64) error
-	InvalidateSelf(ctx context.Context, userID int64,  isFollowing, isFollower bool) error
 }
+
 type followRepository struct {
 	followStore FollowStore
 	followCache FollowCache
@@ -67,20 +66,20 @@ func (r *followRepository) Create(ctx context.Context, followerID, followingID i
 		return nil, err
 	}
 
+	if dbFollow == nil {
+		return nil, errcode.ErrInternal
+	}
+
 	taskData := dbFollow
 	err = r.pool.Submit(func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+        bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
 
-		okFollowings, _ := r.followCache.Exists(bgCtx, followerID, true) 
-		okFollowers, _ := r.followCache.Exists(bgCtx, followingID, false)
-
-		if okFollowers && okFollowings  {
-			_ = r.followCache.Add(bgCtx, followerID, followingID, makeScore(taskData.CreatedAt))
-		} else {
-			_ = r.followCache.InvalidatePair(bgCtx, taskData.FollowerID, taskData.FollowingID)
+        err  = r.followCache.Add(bgCtx, followerID, followingID, makeScore(taskData.CreatedAt))
+		if err != nil {
+			_ = r.followCache.InvalidatePair(bgCtx, followerID, followingID)
 		}
-	})
+    })
 
 	if err != nil {
    		slog.Warn("ants pool へのタスク投入に失敗しました。同期的なキャッシュ破棄を実行します。", "err", err)
@@ -95,20 +94,15 @@ func(r *followRepository) CheckRelation(ctx context.Context, followerID, followi
 		return &dto.RelationRecord{}, nil
 	}
 
-	okFollowing, _ := r.followCache.Exists(ctx, followerID, true)
-    okFollower, _:= r.followCache.Exists(ctx, followingID, false)
+	isFollowing, isFollowed, err := r.followCache.GetRelation(ctx, followerID, followingID)
 
-	if okFollowing && okFollower {
-		isFollowing, isFollowed, err := r.followCache.GetRelation(ctx, followerID, followingID)
-
-		if err == nil {
-			return &dto.RelationRecord{
-				Following: isFollowing,
-				FollowedBy: isFollowed,
-				IsMutual: isFollowing && isFollowed,
-			}, err
-		}
-	}
+    if err == nil {
+        return &dto.RelationRecord{
+            Following:  isFollowing,
+            FollowedBy: isFollowed,
+            IsMutual:   isFollowing && isFollowed,
+        }, nil
+    }
 	
 	low, high := followerID, followingID
 	if low > high {
@@ -125,11 +119,14 @@ func(r *followRepository) CheckRelation(ctx context.Context, followerID, followi
 		return nil, err
 	}
 
+	if res == nil {
+		return nil, errcode.ErrInternal
+	}
 	return dto.NewRelationRecord(res), nil
 }
 
 func(r *followRepository) GetFollowings(ctx context.Context, userID int64) ([]int64, error) {
-	list, err := r.followCache.GetFollowingIDs(ctx, userID)
+	list, err := r.followCache.FindFollowingIDs(ctx, userID)
     if err == nil && len(list) > 0 {
         return list, nil
     }
@@ -167,7 +164,6 @@ func(r *followRepository) GetFollowings(ctx context.Context, userID int64) ([]in
 
 	if err != nil {
 		slog.Warn("ants pool へのタスク投入に失敗しました。同期的なFollowingキャッシュ破棄を実行します。", "err", err)
-		_ = r.followCache.InvalidateSelf(context.Background(), userID, true, false)
 	}
 		
 	
@@ -175,7 +171,7 @@ func(r *followRepository) GetFollowings(ctx context.Context, userID int64) ([]in
 }
 
 func(r *followRepository) GetFollowers(ctx context.Context, userID int64) ([]int64, error) {
-	list, err := r.followCache.GetFollowerIDs(ctx, userID)
+	list, err := r.followCache.FindFollowerIDs(ctx, userID)
     if err == nil && len(list) > 0 {
         return list, nil
     }
@@ -193,8 +189,6 @@ func(r *followRepository) GetFollowers(ctx context.Context, userID int64) ([]int
 
 	ids := make([]int64, len(followers))
 	cacheMembers := make([]*models.CacheMember, len(followers))
-
-	tasks := cacheMembers
 	for i, f := range followers {
 		ids[i] = f.FollowerID
 		cacheMembers[i] = &models.CacheMember{
@@ -202,7 +196,8 @@ func(r *followRepository) GetFollowers(ctx context.Context, userID int64) ([]int
 			Score: makeScore(f.CreatedAt),
 		}
 	}
-	
+
+	tasks := cacheMembers
 	err = r.pool.Submit(func() {
 		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -213,7 +208,6 @@ func(r *followRepository) GetFollowers(ctx context.Context, userID int64) ([]int
 
 	if err != nil {
 		slog.Warn("ants pool へのタスク投入に失敗しました。同期的なFollowerキャッシュ破棄を実行します。", "err", err)
-		_ = r.followCache.InvalidateSelf(context.Background(), userID, false, true)
 	}
 	
 	return ids, nil

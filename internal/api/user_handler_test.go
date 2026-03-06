@@ -42,9 +42,9 @@ func TestSignUp(t *testing.T) {
 					PasswordHash: "password123hash",
 					CreatedAt:    time.Now().UTC(),
 				}
-				sessionResp := &dto.SessionResponse{
+				sessionResp := &dto.AuthRecord{
 					UserID: record.ID,
-					Token: "valid_token_string",
+					Token:  "valid_token_string",
 				}
 				mu.On("Register", mock.Anything, mock.MatchedBy(func(username string) bool {
 					return username == "mock_user"
@@ -172,9 +172,9 @@ func TestLogin(t *testing.T) {
 			},
 			setupMock: func(mu *mockUserService, ms *mockSessionService) {
 				user := &dto.UserRecord{ID: 1, Email: "test@example.com"}
-				sessionResp := &dto.SessionResponse{
+				sessionResp := &dto.AuthRecord{
 					UserID: user.ID,
-					Token: "valid_token_string",
+					Token:  "valid_token_string",
 				}
 				mu.On("Login", mock.Anything, "test@example.com", "password123").Return(user, nil)
 				ms.On("Issue", mock.Anything, user.ID).Return(sessionResp, nil)
@@ -274,7 +274,7 @@ func TestGetMe(t *testing.T) {
 		{
 			name: "マイページ取得成功",
 			setupContext: func(c *gin.Context) {
-				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 101,Token: "Valid_token"})
+				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 101, Token: "Valid_token"})
 			},
 			setupMock: func(mu *mockUserService) {
 				user := &dto.UserRecord{ID: 101, Username: "test_user", Email: "test@example.com", FollowerCount: 10, FollowingCount: 20}
@@ -345,7 +345,6 @@ func TestUserHandlerLogout(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 
-
 	tests := []struct {
 		name           string
 		setupContext   func(c *gin.Context)
@@ -358,7 +357,7 @@ func TestUserHandlerLogout(t *testing.T) {
 			setupContext: func(c *gin.Context) {
 				auth := &dto.AuthContext{
 					UserID: 101,
-					Token: "valid_token",
+					Token:  "valid_token",
 				}
 				c.Set(contextkeys.AuthPayloadKey, auth)
 			},
@@ -383,7 +382,7 @@ func TestUserHandlerLogout(t *testing.T) {
 			setupContext: func(c *gin.Context) {
 				auth := &dto.AuthContext{
 					UserID: 101,
-					Token: "valid_token",
+					Token:  "valid_token",
 				}
 				c.Set(contextkeys.AuthPayloadKey, auth)
 			},

@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-type Userstore interface {
+type UserStore interface {
 	Create(ctx context.Context, user *models.User) (*models.User, error)
 	GetByEmail(ctx context.Context, email string) (*models.User, error)
 	GetFullByID(ctx context.Context, userID int64) (*models.User, error) 
@@ -25,28 +25,27 @@ type Userstore interface {
 }
 
 type UserCache interface {
-	Add(ctx context.Context, info *models.UserInfo, follower, following int64)
+	Add(ctx context.Context, info *models.UserInfo, follower, following int64) error
 	Invalidate(ctx context.Context, userID int64) 
 	Get(ctx context.Context, userID int64) (*models.UserInfo, int64, int64, error) 
-	IncrFollower(ctx context.Context, userID int64, delta int64) error
-	IncrFollowing(ctx context.Context, userID int64, delta int64) error 
 	Exists(ctx context.Context, userID int64) (bool, error)
 	GetLists(ctx context.Context, userIDs []int64) (map[int64]*models.UserInfo, error)
-	AddInfoOnly(ctx context.Context, info *models.UserInfo) 
+	AddLists(ctx context.Context, infos []*models.UserInfo) error
+	
 }
 
 type userRepository struct {
-	userStore Userstore
+	userStore UserStore
 	userCache UserCache
-	sfFollow  *singleflight.Group
+	sfUser  *singleflight.Group
 	pool      *ants.Pool
 }
 
-func NewUserRepository(us Userstore, uc UserCache, p *ants.Pool) *userRepository {
+func NewUserRepository(us UserStore, uc UserCache, p *ants.Pool) *userRepository {
 	return &userRepository{
 		userStore: us,
 		userCache: uc,
-		sfFollow: &singleflight.Group{},
+		sfUser: &singleflight.Group{},
 		pool: p, 
 	}
 }
@@ -69,7 +68,7 @@ func(r *userRepository) Create(ctx context.Context, record *dto.UserRecord) ( *d
 
 func(r *userRepository) GetByEmail(ctx context.Context, email string) (*dto.UserRecord, error) {
 	sfkey := fmt.Sprintf("users:%s", email)
-	res, err := utils.GetDataWithSF(ctx, r.sfFollow, sfkey, func(c context.Context) (*models.User, error) {
+	res, err := utils.GetDataWithSF(ctx, r.sfUser, sfkey, func(c context.Context) (*models.User, error) {
 		return r.userStore.GetByEmail(ctx, email)
 	})
 
@@ -86,7 +85,7 @@ func(r *userRepository) GetByEmail(ctx context.Context, email string) (*dto.User
 func(r *userRepository) GetFullByID(ctx context.Context, userID int64) (*dto.UserRecord, error) {
 	sfKey := fmt.Sprintf("users:%d", userID)
 
-	user, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) (*models.User, error) {
+	user, err := utils.GetDataWithSF(ctx, r.sfUser, sfKey, func(c context.Context) (*models.User, error) {
 		return r.userStore.GetFullByID(ctx, userID)
 	})
 
@@ -108,7 +107,7 @@ func (r *userRepository) GetProfByID(ctx context.Context, userID int64) (*dto.Us
     }
 
     sfKey := fmt.Sprintf("prof:%d", userID)
-    user, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) (*models.User, error) {
+    user, err := utils.GetDataWithSF(ctx, r.sfUser, sfKey, func(c context.Context) (*models.User, error) {
         return r.userStore.GetFullByID(ctx, userID) 
     })
 
@@ -123,10 +122,13 @@ func (r *userRepository) GetProfByID(ctx context.Context, userID int64) (*dto.Us
         backfillCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
         defer cancel()
 
-        r.userCache.Add(backfillCtx, user.ToCacheInfo(), user.FollowerCount, user.FollowingCount)
+        err = r.userCache.Add(backfillCtx, user.ToCacheInfo(), user.FollowerCount, user.FollowingCount)
+		if err != nil {
+			r.userCache.Invalidate(context.Background(), user.ID)
+		}
     })
-
 	if err != nil {
+		r.userCache.Invalidate(context.Background(), user.ID)
 		slog.Warn("ants pool へのタスク投入失敗。プロフィールのバックフィルをスキップします。", "userID", userID, "err", err)
     }
 
@@ -144,18 +146,9 @@ func (r *userRepository) IncreaseFollower(ctx context.Context, userID int64, del
     if err != nil {
         return err 
     }
+    
+	r.userCache.Invalidate(ctx, userID)
 
-    exists, err := r.userCache.Exists(ctx, userID)
-    if err != nil {
-        return err
-    }
-
-    if exists {
-        err = r.userCache.IncrFollower(ctx, userID, delta)
-        if err != nil {
-            r.userCache.Invalidate(ctx, userID)
-        }
-    }
     return nil
 }
 
@@ -165,17 +158,8 @@ func (r *userRepository) IncreaseFollowing(ctx context.Context, userID int64, de
         return err 
     }
 
-    exists, err := r.userCache.Exists(ctx, userID)
-    if err != nil {
-        return err
-    }
+    r.userCache.Invalidate(ctx, userID)
 
-    if exists {
-        err = r.userCache.IncrFollowing(ctx, userID, delta)
-        if err != nil {
-            r.userCache.Invalidate(ctx, userID)
-        }
-    }
     return nil
 }
 
@@ -186,7 +170,7 @@ func (r *userRepository) Exists(ctx context.Context, id int64) (bool, error) {
     }
 
     sfKey := fmt.Sprintf("exists:%d", id)
-    exists, err := utils.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) (bool, error) {
+    exists, err := utils.GetDataWithSF(ctx, r.sfUser, sfKey, func(c context.Context) (bool, error) {
         _, dbErr := r.userStore.GetFullByID(ctx, id)
         if dbErr != nil {
             if errors.Is(dbErr, errcode.ErrUserNotFound) {
@@ -201,13 +185,13 @@ func (r *userRepository) Exists(ctx context.Context, id int64) (bool, error) {
 
 func (r *userRepository) GetBaseInfos(ctx context.Context, userIDs []int64) ([]*dto.UserSlimRecord, error) {
 	if len(userIDs) == 0 {
-		return nil, nil
+		return []*dto.UserSlimRecord{}, nil
 	}
 
-	infos, err := r.userCache.GetLists(ctx, userIDs)
-	if err != nil {
-		slog.Warn("キャッシュでユーザーインフォの取得に失敗しました", "err", err)
-	}
+	infos, _ := r.userCache.GetLists(ctx, userIDs)
+	if infos == nil {
+        infos = make(map[int64]*models.UserInfo, len(userIDs))
+    }
 
 	missedIDs := make([]int64, 0, len(userIDs))
 	for _, id := range userIDs {
@@ -231,9 +215,7 @@ func (r *userRepository) GetBaseInfos(ctx context.Context, userIDs []int64) ([]*
 			backfillCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
             defer cancel()
 
-			for _ , info := range dbInfos {
-				r.userCache.AddInfoOnly(backfillCtx, info)
-			}
+			_ = r.userCache.AddLists(backfillCtx, dbInfos)
 		})
 
 		if err != nil {

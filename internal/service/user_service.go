@@ -12,9 +12,10 @@ type UserRepository interface {
 	Create(ctx context.Context, record *dto.UserRecord) ( *dto.UserRecord, error)
 	GetByEmail(ctx context.Context, email string) (*dto.UserRecord, error) 
 	GetFullByID(ctx context.Context, userID int64) (*dto.UserRecord, error)
+	//Will be inplemented after the implementation of tweetservice -- FindTweetsByUserID and combined together in userhandler
+	//GetProfByID(ctx context.Context, userID int64) (*dto.UserPageRecord, error) 
 	IncreaseFollower(ctx context.Context, id int64, delta int64) error 
 	IncreaseFollowing(ctx context.Context, id int64, delta int64) error 
-	
 	Exists(ctx context.Context, id int64) (bool, error)
 	GetBaseInfos(ctx context.Context, userIDs []int64) ([]*dto.UserSlimRecord, error) 
 }

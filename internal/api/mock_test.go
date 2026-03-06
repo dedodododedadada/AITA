@@ -22,7 +22,7 @@ type mockTweetService struct {
 	mock.Mock
 }
 
-func (m *mockUserService) Register(ctx context.Context, username string, email string, password string) (*dto.UserRecord, error)  {
+func (m *mockUserService) Register(ctx context.Context, username string, email string, password string) (*dto.UserRecord, error) {
 	args := m.Called(ctx, username, email, password)
 	return testutils.SafeGet[dto.UserRecord](args, 0), args.Error(1)
 }
@@ -37,19 +37,19 @@ func (m *mockUserService) ToMyAccount(ctx context.Context, userID int64) (*dto.U
 	return testutils.SafeGet[dto.UserRecord](args, 0), args.Error(1)
 }
 
-func (m *mockSessionService)Issue(ctx context.Context, userID int64) (*dto.SessionResponse, error) {
+func (m *mockSessionService) Issue(ctx context.Context, userID int64) (*dto.AuthRecord, error) {
 	args := m.Called(ctx, userID)
-	return testutils.SafeGet[dto.SessionResponse](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.AuthRecord](args, 0), args.Error(1)
 }
 
-func (m *mockSessionService)Revoke(ctx context.Context, userID int64, token string) error {
+func (m *mockSessionService) Revoke(ctx context.Context, userID int64, token string) error {
 	args := m.Called(ctx, userID, token)
 	return args.Error(0)
 }
 
-func (m *mockSessionService) Validate(ctx context.Context, token string) (*dto.SessionResponse, error) {
+func (m *mockSessionService) Validate(ctx context.Context, token string) (*dto.AuthRecord, error) {
 	args := m.Called(ctx, token)
-	return testutils.SafeGet[dto.SessionResponse](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.AuthRecord](args, 0), args.Error(1)
 }
 
 func (m *mockSessionService) ShouldRefresh(expiresAt, createdAt time.Time) (bool, error) {
@@ -71,9 +71,8 @@ func (m *mockTweetService) FetchTweet(ctx context.Context, tweetID int64) (*mode
 	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
 }
 
-
-func (m *mockTweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64)  (*models.Tweet, bool, error) {
-	args := m.Called(ctx,newContent, tweetID, userID)
+func (m *mockTweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*models.Tweet, bool, error) {
+	args := m.Called(ctx, newContent, tweetID, userID)
 	return testutils.SafeGet[models.Tweet](args, 0), args.Bool(1), args.Error(2)
 }
 

@@ -214,6 +214,7 @@ func TestUpdateContent(t *testing.T) {
 		assert.Equal(t, createdTweet.UserID, updatedTweet.UserID)
 		assert.Equal(t, createdTweet.CreatedAt, updatedTweet.CreatedAt)
 		assert.Equal(t, newContent, updatedTweet.Content)
+		assert.NotEqual(t, updatedTweet.CreatedAt, updatedTweet.UpdatedAt)
 		assert.WithinDuration(t, time.Now(), updatedTweet.UpdatedAt, 2*time.Second)
 		assert.Equal(t, true, updatedTweet.IsEdited)
 	})
