@@ -150,6 +150,6 @@ func (s *userService) GetInfoLists(ctx context.Context, userIDs []int64) ([]*dto
     if err != nil {
         return nil, fmt.Errorf("Service: ユーザーリストの取得に失敗しました: %w", err) 
     }
-
+	
     return infos, nil
 }

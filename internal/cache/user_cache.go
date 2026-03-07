@@ -28,11 +28,11 @@ func NewRedisUserCache(c *redis.Client) *redisUserCache {
 }
 
 func (c *redisUserCache) dataKey(userID int64) string {
-	return fmt.Sprintf("%s:data:%d", c.prefix, userID)
+	return fmt.Sprintf("%sdata:%d", c.prefix, userID)
 }
 
-func(c *redisUserCache) countKey(userID int64)string {
-	return fmt.Sprintf("%s:count:%d", c.prefix, userID)
+func(c *redisUserCache) countKey(userID int64) string {
+	return fmt.Sprintf("%scount:%d", c.prefix, userID)
 }
 
 func (c *redisUserCache) Add(ctx context.Context, info *models.UserInfo, fllwrCount, fllwngCount int64) error {

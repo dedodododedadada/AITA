@@ -128,6 +128,10 @@ func(s *followeService) GetFollowers(ctx context.Context, userID int64) ([]*dto.
     if err != nil {
         return nil, fmt.Errorf("フォロワーの取得に失敗しました%w",err)
     }
+	
+	if len(followerIDs) == 0 {
+		return []*dto.UserSlimRecord{}, nil
+	}
 
     return s.countManager.GetInfoLists(ctx, followerIDs)
 }
@@ -141,6 +145,10 @@ func(s *followeService) GetFollowings(ctx context.Context, userID int64) ([]*dto
     if err != nil {
         return nil, fmt.Errorf("フォロー数の取得に失敗しました:%w", err)
     }
+
+	if len(followingIDs) == 0 {
+		return []*dto.UserSlimRecord{}, nil
+	}
 
     return s.countManager.GetInfoLists(ctx, followingIDs)
 }

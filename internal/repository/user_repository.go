@@ -50,7 +50,7 @@ func NewUserRepository(us UserStore, uc UserCache, p *ants.Pool) *userRepository
 	}
 }
 
-func(r *userRepository) Create(ctx context.Context, record *dto.UserRecord) ( *dto.UserRecord, error) {
+func(r *userRepository) Create(ctx context.Context, record *dto.UserRecord) (*dto.UserRecord, error) {
 	user := record.ToUserModel()
 
 	dbUser, err := r.userStore.Create(ctx, user)
