@@ -1,28 +1,28 @@
 package service
 
 import (
+	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"context"
 	"fmt"
 )
 
-type TweetStore interface {
-	CreateTweet(ctx context.Context, tweet *models.Tweet) (*models.Tweet, error)
-	GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error)
-	UpdateContent(ctx context.Context, newContent string, tweetID int64) (*models.Tweet,error)
-	DeleteTweet(ctx context.Context, tweetID int64) error
+type TweetRepository interface {
+	Create(ctx context.Context, record *dto.TweetRecord) (*dto.TweetRecord, error) 
+	Get(ctx context.Context, tweetID int64) (*dto.TweetRecord, error) 
+	Update(ctx context.Context, newContent string, tweetID int64) (*dto.TweetRecord, error) 
+	Delete(ctx context.Context, tweetID int64) error 
 }
 
 type tweetService struct {
-	tweetStore TweetStore
+	tweetRepository TweetRepository
 }
 
-func NewTweetService(ts TweetStore) *tweetService {
-	return &tweetService{tweetStore: ts}
+func NewTweetService(tr TweetRepository) *tweetService {
+	return &tweetService{tweetRepository: tr}
 }
 
-func (s *tweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*models.Tweet, error) {
+func (s *tweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*dto.TweetRecord, error) {
 	if userID <= 0 {
 		return nil, errcode.ErrInvalidUserID
 	}
@@ -31,25 +31,25 @@ func (s *tweetService) PostTweet(ctx context.Context, userID int64, content stri
         return nil, errcode.ErrRequiredFieldMissing
     }
 
-	initialTweet := &models.Tweet{
+	initialTweet := &dto.TweetRecord{
 		UserID:   userID,
 		Content:  content,
 		ImageURL: imageURL,
 	}
 	
-	savedTweet, err := s.tweetStore.CreateTweet(ctx, initialTweet)
+	savedTweet, err := s.tweetRepository.Create(ctx, initialTweet)
 	if err != nil {
 		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
 	}
 	return savedTweet, nil
 }
 
-func (s *tweetService) FetchTweet(ctx context.Context, tweetID int64) (*models.Tweet, error) {
+func (s *tweetService) FetchTweet(ctx context.Context, tweetID int64) (*dto.TweetRecord, error) {
 	if tweetID <= 0 {
 		return nil, errcode.ErrInvalidTweetID
 	}
 
-	tweet, err := s.tweetStore.GetTweetByTweetID(ctx, tweetID)
+	tweet, err := s.tweetRepository.Get(ctx,  tweetID)
 
 	if err != nil {
 		return nil, fmt.Errorf("ツイート情報の取得に失敗しました: %w", err)
@@ -58,7 +58,7 @@ func (s *tweetService) FetchTweet(ctx context.Context, tweetID int64) (*models.T
 	return tweet, nil
 }
 
-func (s *tweetService) ToMyTweet(ctx context.Context, tweetID int64, userID int64) (*models.Tweet, error) {
+func (s *tweetService) ToMyTweet(ctx context.Context, tweetID int64, userID int64) (*dto.TweetRecord, error) {
 	if userID <= 0 {
 		return nil, errcode.ErrInvalidUserID
 	}
@@ -75,7 +75,7 @@ func (s *tweetService) ToMyTweet(ctx context.Context, tweetID int64, userID int6
 	return tweet, nil
 }
 
-func (s *tweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*models.Tweet, bool, error) {
+func (s *tweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*dto.TweetRecord, bool, error) {
 	if userID <= 0 {
 		return nil, false, errcode.ErrInvalidUserID
 	}
@@ -96,7 +96,7 @@ func (s *tweetService) EditTweet(ctx context.Context, newContent string, tweetID
 		return nil, false, errcode.ErrEditTimeExpired
 	}
 
-	tweet, err = s.tweetStore.UpdateContent(ctx, newContent, tweetID)
+	tweet, err = s.tweetRepository.Update(ctx, newContent, tweetID)
 
 	if err != nil {
 		return nil, false, fmt.Errorf("ツイート編集に失敗しました: %w", err)
@@ -114,7 +114,7 @@ func (s *tweetService) RemoveTweet(ctx context.Context, tweetID int64, userID in
 		return err
 	}
 
-	err = s.tweetStore.DeleteTweet(ctx, tweetID)
+	err = s.tweetRepository.Delete(ctx, tweetID)
 	if err != nil {
 		return fmt.Errorf("ツイートの削除に失敗しました: %w", err)
 	}

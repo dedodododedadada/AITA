@@ -31,6 +31,17 @@ type RelationResponse struct {
     FollowedBy bool  `json:"followed_by"`  
     IsMutual   bool  `json:"is_mutual"`   
 }
+
+type TweetResponse struct{
+	ID            int64        `json:"id"`
+	UserID        int64		   `json:"user_id"`
+	Content       string       `json:"content"`
+	ImageURL     *string       `json:"image_url"`
+	CreatedAt     time.Time    `json:"created_at"` 
+	UpdatedAt     time.Time    `json:"updated_at"`
+	IsEdited      bool         `json:"is_edited"`
+}
+
 type Response struct {
 	Data    any    `json:"data,omitempty"`
 	Message string `json:"message,omitempty"`

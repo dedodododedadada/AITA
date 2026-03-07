@@ -125,7 +125,7 @@ func (s *postgresTweetStore) DeleteTweet(ctx context.Context, tweetID int64) err
 }
 
 
-func (s *postgresTweetStore) GetTweetsByIDs(ctx context.Context, tweetIDs []int64) ([]*models.Tweet, error) {
+func (s *postgresTweetStore) GetTweetsByTweetIDs(ctx context.Context, tweetIDs []int64) ([]*models.Tweet, error) {
 	if len(tweetIDs) == 0 {
 		return []*models.Tweet{}, nil
 	}

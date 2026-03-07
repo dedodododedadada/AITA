@@ -2,7 +2,6 @@ package api
 
 import (
 	"aita/internal/dto"
-	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"context"
 	"time"
@@ -61,19 +60,19 @@ func (m *mockSessionService) RefreshAsync(token string) {
 	_ = m.Called(token)
 }
 
-func (m *mockTweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*models.Tweet, error) {
+func (m *mockTweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*dto.TweetRecord, error) {
 	args := m.Called(ctx, userID, content, imageURL)
-	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.TweetRecord](args, 0), args.Error(1)
 }
 
-func (m *mockTweetService) FetchTweet(ctx context.Context, tweetID int64) (*models.Tweet, error) {
+func (m *mockTweetService) FetchTweet(ctx context.Context, tweetID int64) (*dto.TweetRecord, error) {
 	args := m.Called(ctx, tweetID)
-	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.TweetRecord](args, 0), args.Error(1)
 }
 
-func (m *mockTweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*models.Tweet, bool, error) {
+func (m *mockTweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*dto.TweetRecord, bool, error) {
 	args := m.Called(ctx, newContent, tweetID, userID)
-	return testutils.SafeGet[models.Tweet](args, 0), args.Bool(1), args.Error(2)
+	return testutils.SafeGet[dto.TweetRecord](args, 0), args.Bool(1), args.Error(2)
 }
 
 func (m *mockTweetService) RemoveTweet(ctx context.Context, tweetID int64, userID int64) error {

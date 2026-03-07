@@ -29,7 +29,7 @@ func (c *redisTweetCache) tweetKey(tweetID int64) string {
 	return fmt.Sprintf("%scontent:%d", c.prefix, tweetID)
 }
 
-func(c *redisTweetCache) SetTweet(ctx context.Context, tweet *models.Tweet) {
+func(c *redisTweetCache) SetTweet(ctx context.Context, tweet *models.Tweet) error {
 	keyTweet := c.tweetKey(tweet.ID)
 
 	data, err := json.Marshal(tweet)
@@ -38,7 +38,7 @@ func(c *redisTweetCache) SetTweet(ctx context.Context, tweet *models.Tweet) {
 			"tweet_id", tweet.ID,
 			"err", err,
 		)
-		return
+		return err
 	}
 
 	ttl := utils.GetRandomExpiration(12*time.Hour, 6*time.Hour)
@@ -48,7 +48,10 @@ func(c *redisTweetCache) SetTweet(ctx context.Context, tweet *models.Tweet) {
 			"tweet_id", tweet.ID,
 			"err", err,
 		)
+		return err
 	}	
+
+	return nil
 }
 
 func(c *redisTweetCache) GetTweet(ctx context.Context, tweetID int64) (*models.Tweet, error) {
@@ -147,7 +150,7 @@ func (c *redisTweetCache) Invalidate(ctx context.Context, tweetID int64) error {
 	return err
 }
 
-func (c *redisTweetCache) MultiSetTweets(ctx context.Context, tweets []models.Tweet) error {
+func (c *redisTweetCache) MultiSetTweets(ctx context.Context, tweets []*models.Tweet) error {
     if len(tweets) == 0 {
         return nil
     }

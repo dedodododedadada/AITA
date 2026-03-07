@@ -3,7 +3,6 @@ package api
 import (
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"aita/internal/pkg/app"
 	"context"
 	"net/http"
@@ -12,9 +11,9 @@ import (
 )
 
 type TweetService interface {
-	PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*models.Tweet, error)
-	FetchTweet(ctx context.Context, tweetID int64) (*models.Tweet, error)
-	EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*models.Tweet, bool, error)
+	PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*dto.TweetRecord, error)
+	FetchTweet(ctx context.Context, tweetID int64) (*dto.TweetRecord, error)
+	EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*dto.TweetRecord, bool, error)
 	RemoveTweet(ctx context.Context, tweetID int64, userID int64) error
 }
 
@@ -33,7 +32,7 @@ func (h *TweetHandler) Create(c *gin.Context) {
 		return
 	}
 
-	var req dto.CreateTweetRequest
+	var req app.CreateTweetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		appErr := errcode.FilterBindError(err)
 		c.JSON(errcode.GetStatusCode(appErr), app.Fail(appErr))
@@ -56,7 +55,7 @@ func (h *TweetHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, app.Success(dto.NewTweetResponse(tweet)))
+	c.JSON(http.StatusCreated, app.Success(tweet.ToTweetResponse()))
 }
 
 func (h *TweetHandler) Get(c *gin.Context) {
@@ -71,7 +70,7 @@ func (h *TweetHandler) Get(c *gin.Context) {
 		c.JSON(errcode.GetStatusCode(err), app.Fail(err))
 		return
 	}
-	c.JSON(http.StatusOK, app.Success(dto.NewTweetResponse(tweet)))
+	c.JSON(http.StatusOK, app.Success(tweet.ToTweetResponse()))
 
 }
 func (h *TweetHandler) Update(c *gin.Context) {
@@ -85,7 +84,7 @@ func (h *TweetHandler) Update(c *gin.Context) {
 		c.JSON(errcode.GetStatusCode(err), app.Fail(err))
 		return
 	}
-	var req dto.UpdateTweetRequest
+	var req app.UpdateTweetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		appErr := errcode.FilterBindError(err)
 		c.JSON(errcode.GetStatusCode(appErr), app.Fail(appErr))
@@ -107,7 +106,7 @@ func (h *TweetHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, app.Success(dto.NewTweetResponse(tweet)))
+	c.JSON(http.StatusOK, app.Success(tweet.ToTweetResponse()))
 
 }
 func (h *TweetHandler) Delete(c *gin.Context) {

@@ -4,7 +4,6 @@ import (
 	"aita/internal/contextkeys"
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"aita/internal/models"
 	"aita/internal/pkg/app"
 	"bytes"
 	"encoding/json"
@@ -32,7 +31,7 @@ func TestTweetCreate(t *testing.T) {
 	}{
 		{
 			name:        "ツイート投稿成功",
-			requestBody: dto.CreateTweetRequest{Content: "AITAの初投稿!"},
+			requestBody: app.CreateTweetRequest{Content: "AITAの初投稿!"},
 			setupAuth: func(c *gin.Context) {
 				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
 			},
@@ -43,7 +42,7 @@ func TestTweetCreate(t *testing.T) {
 					int64(10),
 					"AITAの初投稿!",
 					mock.Anything,
-				).Return(&models.Tweet{
+				).Return(&dto.TweetRecord{
 					ID:        100,
 					Content:   "AITAの初投稿!",
 					UserID:    10,
@@ -63,7 +62,7 @@ func TestTweetCreate(t *testing.T) {
 		},
 		{
 			name:           "未認証エラー:ContextにIDがない",
-			requestBody:    dto.CreateTweetRequest{Content: "Hello"},
+			requestBody:    app.CreateTweetRequest{Content: "Hello"},
 			setupAuth:      func(c *gin.Context) {},
 			setupMock:      func(mt *mockTweetService) {},
 			expectedStatus: http.StatusUnauthorized,
@@ -89,7 +88,7 @@ func TestTweetCreate(t *testing.T) {
 		},
 		{
 			name:        "バリデーションエラー：内容が空",
-			requestBody: dto.CreateTweetRequest{Content: ""},
+			requestBody: app.CreateTweetRequest{Content: ""},
 			setupAuth: func(c *gin.Context) {
 				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
 			},
@@ -144,7 +143,7 @@ func TestTweetGet(t *testing.T) {
 			name:    "ツイート取得成功",
 			tweetID: "100",
 			setupMock: func(mt *mockTweetService) {
-				mt.On("FetchTweet", mock.Anything, int64(100)).Return(&models.Tweet{
+				mt.On("FetchTweet", mock.Anything, int64(100)).Return(&dto.TweetRecord{
 					ID: 100, Content: "テスト取得", UserID: 10,
 				}, nil)
 			},
@@ -222,13 +221,13 @@ func TestTweetUpdate(t *testing.T) {
 		{
 			name:        "ツイート更新成功",
 			tweetID:     "100",
-			requestBody: dto.UpdateTweetRequest{Content: "更新後の内容"},
+			requestBody: app.UpdateTweetRequest{Content: "更新後の内容"},
 			setupAuth: func(c *gin.Context) {
 				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
 			},
 			setupMock: func(mt *mockTweetService) {
 				mt.On("EditTweet", mock.Anything, "更新後の内容", int64(100), int64(10)).
-					Return(&models.Tweet{ID: 100, Content: "更新後の内容", IsEdited: true}, true, nil)
+					Return(&dto.TweetRecord{ID: 100, Content: "更新後の内容", IsEdited: true}, true, nil)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -241,13 +240,13 @@ func TestTweetUpdate(t *testing.T) {
 		{
 			name:        "更新成功：内容に変更なし",
 			tweetID:     "100",
-			requestBody: dto.UpdateTweetRequest{Content: "同じ内容"},
+			requestBody: app.UpdateTweetRequest{Content: "同じ内容"},
 			setupAuth: func(c *gin.Context) {
 				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
 			},
 			setupMock: func(mt *mockTweetService) {
 				mt.On("EditTweet", mock.Anything, "同じ内容", int64(100), int64(10)).
-					Return(&models.Tweet{ID: 100, Content: "同じ内容"}, false, nil)
+					Return(&dto.TweetRecord{ID: 100, Content: "同じ内容"}, false, nil)
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -259,7 +258,7 @@ func TestTweetUpdate(t *testing.T) {
 		{
 			name:        "エラー：編集期限切れ",
 			tweetID:     "100",
-			requestBody: dto.UpdateTweetRequest{Content: "手遅れな更新"},
+			requestBody: app.UpdateTweetRequest{Content: "手遅れな更新"},
 			setupAuth: func(c *gin.Context) {
 				c.Set(contextkeys.AuthPayloadKey, &dto.AuthContext{UserID: 10})
 			},

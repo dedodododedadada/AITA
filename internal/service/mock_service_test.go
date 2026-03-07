@@ -2,7 +2,6 @@ package service
 
 import (
 	"aita/internal/dto"
-	"aita/internal/models"
 	"aita/internal/pkg/testutils"
 	"context"
 	"errors"
@@ -77,27 +76,27 @@ func(m *mockSessionRepository) Delete(ctx context.Context, sr *dto.SessionRecord
 	return args.Error(0)
 }
 
-type mockTweetStore struct {
+type mockTweetRepository struct {
 	mock.Mock
 }
 
-func (m *mockTweetStore) CreateTweet(ctx context.Context, twt *models.Tweet) (*models.Tweet, error) {
-	args := m.Called(ctx, twt)
-	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+func (m *mockTweetRepository) Create(ctx context.Context, record *dto.TweetRecord) (*dto.TweetRecord, error)  {
+	args := m.Called(ctx, record)
+	return testutils.SafeGet[dto.TweetRecord](args, 0), args.Error(1)
 }
 
-func(m *mockTweetStore) GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error) {
+func(m *mockTweetRepository) Get(ctx context.Context, tweetID int64) (*dto.TweetRecord, error)  {
 	args := m.Called(ctx, tweetID)
-	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.TweetRecord](args, 0), args.Error(1)
 }
 
-func(m *mockTweetStore) UpdateContent(ctx context.Context, newContent string,  tweetID int64) (*models.Tweet, error) {
+func(m *mockTweetRepository) Update(ctx context.Context, newContent string, tweetID int64) (*dto.TweetRecord, error)  {
 	args := m.Called(ctx, newContent, tweetID)
-	return testutils.SafeGet[models.Tweet](args, 0), args.Error(1)
+	return testutils.SafeGet[dto.TweetRecord](args, 0), args.Error(1)
 }
 
 
-func(m *mockTweetStore) DeleteTweet(ctx context.Context, tweetID int64) error {
+func(m *mockTweetRepository) Delete(ctx context.Context, tweetID int64) error {
 	args := m.Called(ctx, tweetID)
 	return args.Error(0)
 }

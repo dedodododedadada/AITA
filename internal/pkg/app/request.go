@@ -4,6 +4,7 @@ import (
 	"aita/internal/errcode"
 	"aita/internal/pkg/utils"
 	"strings"
+	"unicode/utf8"
 )
 
 type SignupRequest struct {
@@ -25,6 +26,14 @@ type UnFollowRequest struct {
 	TargetID int64 `json:"target_id" binding:"required,gt=0"`
 }
 
+type CreateTweetRequest struct {
+	Content		 string        `json:"content" binding:"max=1000"`
+	ImageURL    *string        `json:"image_url" binding:"omitempty,url"`
+}
+
+type UpdateTweetRequest struct {
+    Content      string        `json:"content" binding:"required,max=1000"`
+}
 
 func (r *SignupRequest) Validate() error {
 	r.Username = strings.TrimSpace(r.Username)
@@ -59,4 +68,35 @@ func (r *LoginRequest) Validate() error {
 		return errcode.ErrInvalidEmailFormat
 	}
 	return nil
+}
+
+
+func (r *CreateTweetRequest) Validate() error {
+    r.Content = strings.TrimSpace(r.Content)
+    if r.Content == "" {
+        return errcode.ErrRequiredFieldMissing
+    }
+	if r.ImageURL != nil {
+        trimmed := strings.TrimSpace(*r.ImageURL)
+        if trimmed == "" {
+            r.ImageURL = nil
+        } else {
+            *r.ImageURL = trimmed
+        }
+    }
+   	if utf8.RuneCountInString(r.Content) > 1000 {
+		return errcode.ErrInvalidContentFormat
+	}
+    return nil
+}
+
+func (r *UpdateTweetRequest) Validate() error {
+    r.Content = strings.TrimSpace(r.Content)
+    if r.Content == "" {
+        return errcode.ErrRequiredFieldMissing
+    }
+    if utf8.RuneCountInString(r.Content) > 1000 {
+        return errcode.ErrInvalidContentFormat
+    }
+    return nil
 }

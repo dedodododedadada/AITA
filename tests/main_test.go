@@ -20,7 +20,8 @@ var (
 	testFollowStore  repository.FollowStore
 	testFollowCache  repository.FollowCache
 	testSessionStore repository.SessionStore
-	testTweetStore   service.TweetStore
+	testTweetStore   repository.TweetStore
+	testTweetCache   repository.TweetCache
 	testTokemanager  service.TokenManager
 	testHasher       service.PasswordHasher
 	testContext      *testutils.TestContext
@@ -35,6 +36,7 @@ func TestMain(m *testing.M) {
 	testTokemanager = crypto.NewTokenManager()
 	testUserCache = cache.NewRedisUserCache(testContext.TestRDB)
 	testFollowCache = cache.NewRedisFollowCache(testContext.TestRDB)
+	testTweetCache = cache.NewRedisTweetCache(testContext.TestRDB)
 	testUserStore = db.NewPostgresUserStore(testContext.TestDB)
 	testSessionStore = db.NewRedisSessionStore(testContext.TestRDB)
 	testTweetStore = db.NewPostgresTweetStore(testContext.TestDB)

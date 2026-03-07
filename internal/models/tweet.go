@@ -4,9 +4,7 @@ import(
 	"time"
 )
 
-const(
-	editwindow = 10 * time.Minute
-)
+
 
 type Tweet struct{
 	ID            int64        `db:"id"`
@@ -22,15 +20,7 @@ type Tweet struct{
 
 
 
-func(t *Tweet) CanBeUpdated() bool {
-	if t == nil {
-		return false
-	}
 
-	duration := time.Now().UTC().Sub(t.CreatedAt.UTC())
-	
-	return duration <= editwindow
-}
 
 
 
