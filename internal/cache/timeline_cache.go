@@ -4,6 +4,7 @@ import (
 	"aita/internal/pkg/utils"
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -40,6 +41,11 @@ func (c *redisTimelineCache) PushBatch(ctx context.Context, tweetID int64, userI
 
 	_, err := pipe.Exec(ctx)
 	if err != nil {
+		slog.Error("[Redis Error] タイムラインの一括プッシュに失敗しました",
+			"tweet_id", tweetID,
+			"user_count", len(userIDs),
+			"err", err,
+		)
 		return err
 	}
 
@@ -51,19 +57,24 @@ func (c *redisTimelineCache) FindRange(ctx context.Context, userID int64, start,
 		return []int64{}, nil
 	}
 
+	tlKey := c.timelineKey(userID)
 	res, err := c.client.ZRangeArgs(ctx, redis.ZRangeArgs{
-		Key: c.timelineKey(userID),
+		Key: tlKey,
 		Start: start,
 		Stop: stop,
 		Rev: true,
 	}).Result()
 	if err != nil {
-
+		slog.Error("[Redis Error] タイムラインの取得に失敗しました",
+			"user_id", userID,
+			"key", tlKey,
+			"start", start,
+			"stop", stop,
+			"err", err,
+		)
+		return nil, err
 	}
 
-	if len(res) == 0 {
-		return []int64{}, nil
-	}
 	tweetIDs := make([]int64, 0, len(res)) 
 	for _, idStr := range res {
 		id, err := strconv.ParseInt(idStr, 10, 64)
@@ -99,6 +110,11 @@ func(c *redisTimelineCache) RecallTweet(ctx context.Context, tweetID int64, user
 	_, err := pipe.Exec(ctx)
 
 	if err != nil {
+		slog.Error("[Redis Error] タイムラインからのツイート削除に失敗しました",
+			"tweet_id", tweetID,
+			"batch_size", len(batch),
+			"err", err,
+		)
 		return err
 	}
 

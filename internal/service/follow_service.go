@@ -26,20 +26,20 @@ type TransactionManager interface {
 	Exec(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
-type followeService struct {
+type followService struct {
 	followRepository 	FollowRepository
 	countManager     	CountManager
 	transactionManager  TransactionManager
 }
 
-func NewFollowService(fr FollowRepository, cm CountManager) *followeService {
-	return &followeService{
+func NewFollowService(fr FollowRepository, cm CountManager) *followService {
+	return &followService{
 		followRepository: fr,
 		countManager: cm,
 	}
 }
 
-func (s *followeService) Follow(ctx context.Context, userID, targetID int64) (*dto.FollowRecord, error) {
+func (s *followService) Follow(ctx context.Context, userID, targetID int64) (*dto.FollowRecord, error) {
 	if userID <= 0 || targetID <= 0{
 		return nil, errcode.ErrInvalidUserID
 	}
@@ -79,7 +79,7 @@ func (s *followeService) Follow(ctx context.Context, userID, targetID int64) (*d
     return record, nil
 }
 
-func(s *followeService) UnFollow(ctx context.Context, userID, targetID int64) error {
+func(s *followService) UnFollow(ctx context.Context, userID, targetID int64) error {
 	if userID <=0 || targetID <= 0 {
 		return errcode.ErrInvalidUserID
 	} 
@@ -119,8 +119,8 @@ func(s *followeService) UnFollow(ctx context.Context, userID, targetID int64) er
 	return nil
 }
 
-func(s *followeService) GetFollowers(ctx context.Context, userID int64) ([]*dto.UserSlimRecord, error) {
-    if userID <= 0 {
+func(s *followService) GetFollowerIDs(ctx context.Context, userID int64) ([]int64, error) {
+	 if userID <= 0 {
 		return nil, errcode.ErrInvalidUserID
 	}
 
@@ -129,6 +129,14 @@ func(s *followeService) GetFollowers(ctx context.Context, userID int64) ([]*dto.
         return nil, fmt.Errorf("フォロワーの取得に失敗しました%w",err)
     }
 	
+	return followerIDs, nil
+}
+
+func(s *followService) GetFollowers(ctx context.Context, userID int64) ([]*dto.UserSlimRecord, error) {
+    followerIDs, err := s.GetFollowerIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	if len(followerIDs) == 0 {
 		return []*dto.UserSlimRecord{}, nil
 	}
@@ -136,15 +144,24 @@ func(s *followeService) GetFollowers(ctx context.Context, userID int64) ([]*dto.
     return s.countManager.GetInfoLists(ctx, followerIDs)
 }
 
-func(s *followeService) GetFollowings(ctx context.Context, userID int64) ([]*dto.UserSlimRecord, error) {
+func(s *followService) GetFollowingIDs(ctx context.Context, userID int64) ([]int64, error) {
 	if userID <= 0 {
 		return nil, errcode.ErrInvalidUserID
 	}
 
 	followingIDs, err := s.followRepository.GetFollowings(ctx, userID)
     if err != nil {
-        return nil, fmt.Errorf("フォロー数の取得に失敗しました:%w", err)
+        return nil, fmt.Errorf("フォロワーの取得に失敗しました%w",err)
     }
+	
+	return followingIDs, nil
+}
+
+func(s *followService) GetFollowings(ctx context.Context, userID int64) ([]*dto.UserSlimRecord, error) {
+	followingIDs, err := s.GetFollowingIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 
 	if len(followingIDs) == 0 {
 		return []*dto.UserSlimRecord{}, nil
@@ -153,7 +170,7 @@ func(s *followeService) GetFollowings(ctx context.Context, userID int64) ([]*dto
     return s.countManager.GetInfoLists(ctx, followingIDs)
 }
 
-func (s *followeService) GetRelation(ctx context.Context, userID, targetID int64) (*dto.RelationRecord, error) {
+func (s *followService) GetRelation(ctx context.Context, userID, targetID int64) (*dto.RelationRecord, error) {
     if userID <= 0 || targetID <= 0 {
         return nil, errcode.ErrInvalidUserID
     }

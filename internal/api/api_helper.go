@@ -48,3 +48,5 @@ func GetIDParam(c *gin.Context, name string)(int64, error) {
 	return id, nil
 }
 
+
+

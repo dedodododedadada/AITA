@@ -120,7 +120,7 @@ func  (r *tweetRepository) Get(ctx context.Context, tweetID int64) (*dto.TweetRe
 		return r.tweetStore.GetTweetByTweetID(ctx, tweetID)
 	})
 
-	if  err != nil {
+	if err != nil {
 		return nil, err
 	}
 
