@@ -3,8 +3,8 @@ package db
 import (
 	"aita/internal/errcode"
 	"aita/internal/models"
-	"aita/internal/pkg/testutils"
 	"aita/internal/pkg/utils"
+	testConfig "aita/internal/testconfig"
 	"context"
 	"strings"
 	"testing"
@@ -86,7 +86,7 @@ func TestCreateTweetWhileError(t *testing.T) {
 	})
 
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 
 		tempTweetStore := NewPostgresTweetStore(tempDB)
@@ -171,7 +171,7 @@ func TestGetTweetByTweetIDWhileErr(t *testing.T) {
 	})
 
 	t.Run("異常系:データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 		tempTweetStore := NewPostgresTweetStore(tempDB)
 		tempDB.Close()
@@ -257,7 +257,7 @@ func TestUpdateContentWhileErr(t *testing.T) {
 	})
 
 	t.Run("異常系:データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 		tempTweetStore := NewPostgresTweetStore(tempDB)
 		tempDB.Close()
@@ -327,7 +327,7 @@ func TestDeleteTweetWhileErr(t *testing.T) {
 	})
 
 	t.Run("異常系:データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
-		temp, err := testutils.OpenDB(testContext.DSN)
+		temp, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 		tempTweetStore := NewPostgresTweetStore(temp)
 		temp.Close()

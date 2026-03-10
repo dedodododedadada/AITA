@@ -6,6 +6,7 @@ import (
 	"aita/internal/configuration"
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
+	"aita/internal/pkg/messagequeue"
 	"aita/internal/repository"
 	"aita/internal/service"
 	"context"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/panjf2000/ants/v2"
@@ -25,10 +27,19 @@ import (
 
 func main() {
 	config := configuration.LoadConfig()
+	if config.AppEnv == "production" {
+        gin.SetMode(gin.ReleaseMode)
+    } else {
+        gin.SetMode(gin.DebugMode)
+    }
+	
 	database, err:= sqlx.Connect("postgres", config.DBConnStr)
 	if err!= nil {
 		log.Fatal("データベースに接続できません",err)
 	}
+	database.SetMaxOpenConns(config.DBMaxOpenConns)
+    database.SetMaxIdleConns(config.DBMaxIdleConns)
+    database.SetConnMaxLifetime(time.Duration(config.DBConnMaxLifetime) * time.Minute)
 	defer database.Close()
 	log.Printf("✅ データベースへの接続に成功しました！")
 
@@ -36,6 +47,8 @@ func main() {
         Addr:     fmt.Sprintf("%s:%s", config.RedisHost, config.RedisPort),
         Password: config.RedisPassword,
 		DB: 0, 
+		PoolSize: config.RedisPoolSize,
+		MinIdleConns: config.RedisMinIdleConns,
     })
 
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -52,6 +65,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer backfillPool.Release()
+	// WorkerPool, err := ants.NewPool(config.WorkPoolSize)
+	// if err != nil {
+	// 	slog.Error("ルーチンプールの起動に失敗しました", "err", err)
+	// 	os.Exit(1)
+	// }
+	// defer backfillPool.Release()
+
+	tweetMQ :=  messagequeue.NewRedisMQ(rdb, config.TweetStream, config.FanoutGroup, "api-server-1")
+	if err := tweetMQ.InitMQ(context.Background()); err != nil {
+        log.Fatalf("MQ の初期化に失敗しました: %v", err)
+    }
+    log.Println("✅ Redis Stream (MQ) の初期化に成功しました！")
 
 	hasher := crypto.NewBcryptHasher(bcrypt.DefaultCost)
 	tokenmanager := crypto.NewTokenManager()
@@ -65,7 +90,7 @@ func main() {
 	userRepository := repository.NewUserRepository(userStore, userCache, backfillPool)
 	serviceRepository := repository.NewSessionRepository(sessionStore)
 	followRepository := repository.NewFollowRepository(followStore, followCache, backfillPool)
-	tweetRepository := repository.NewTweetRepository(tweetStore, tweetCache, backfillPool)
+	tweetRepository := repository.NewTweetRepository(tweetStore, tweetCache, tweetMQ, backfillPool)
 	userService := service.NewUserService(userRepository, hasher)
 	sessionService := service.NewSessionService(serviceRepository, userService, tokenmanager)
 	tweetService := service.NewTweetService(tweetRepository)

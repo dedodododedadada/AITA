@@ -5,6 +5,8 @@ import (
 	"aita/internal/errcode"
 	"context"
 	"fmt"
+	"log/slog"
+	"time"
 )
 
 type TweetRepository interface {
@@ -14,6 +16,7 @@ type TweetRepository interface {
 	Delete(ctx context.Context, tweetID int64) error 
 	MultiGet(ctx context.Context, tweetIDs []int64) ([]*dto.TweetRecord, error)
 	GetTweetsByAuthor(ctx context.Context, userID int64, page, size int) ([]int64, error)
+	AsyncToMQ(ctx context.Context, tweetID, authorID int64, createdAt time.Time, action string) error
 }
 
 type tweetService struct {
@@ -43,6 +46,15 @@ func (s *tweetService) PostTweet(ctx context.Context, userID int64, content stri
 	if err != nil {
 		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
 	}
+
+	_ = s.tweetRepository.AsyncToMQ(
+		ctx,
+		savedTweet.ID,
+		savedTweet.UserID,
+		savedTweet.CreatedAt,
+		dto.ActionCreate,
+	)
+
 	return savedTweet, nil
 }
 
@@ -71,11 +83,13 @@ func (s *tweetService) ToMyTweet(ctx context.Context, tweetID int64, userID int6
 	}
 
 	if tweet.UserID != userID {
-		return nil, errcode.ErrForbidden
+		slog.Info("権限外のアクセスですが、メタデータは保持します", "tweet_id", tweet.ID)
+		return tweet, errcode.ErrForbidden
 	}
 
 	return tweet, nil
 }
+
 
 func (s *tweetService) EditTweet(ctx context.Context, newContent string, tweetID int64, userID int64) (*dto.TweetRecord, bool, error) {
 	if userID <= 0 {
@@ -87,6 +101,9 @@ func (s *tweetService) EditTweet(ctx context.Context, newContent string, tweetID
 	}
 	tweet, err := s.ToMyTweet(ctx, tweetID, userID)
 	if err != nil {
+		if err == errcode.ErrForbidden{
+			return tweet, true, nil
+		}
 		return nil, false, err
 	}
 
@@ -111,8 +128,12 @@ func (s *tweetService) RemoveTweet(ctx context.Context, tweetID int64, userID in
 	if userID <= 0 {
 		return errcode.ErrInvalidUserID
 	}
-	_, err := s.ToMyTweet(ctx, tweetID, userID)
+	deletedTweet, err := s.ToMyTweet(ctx, tweetID, userID)
 	if err != nil {
+		if err == errcode.ErrForbidden {
+			return nil
+		}
+
 		return err
 	}
 
@@ -120,6 +141,15 @@ func (s *tweetService) RemoveTweet(ctx context.Context, tweetID int64, userID in
 	if err != nil {
 		return fmt.Errorf("ツイートの削除に失敗しました: %w", err)
 	}
+
+		_ = s.tweetRepository.AsyncToMQ(
+		ctx,
+		deletedTweet.ID,
+		deletedTweet.UserID,
+		deletedTweet.CreatedAt,
+		dto.ActionDelete,
+	)
+
 
 	return nil
 }
@@ -142,6 +172,13 @@ func (s *tweetService) GetMyTweets(ctx context.Context, userID int64, page, size
     if userID <= 0 {
         return nil, errcode.ErrInvalidUserID
     }
+	
+	if page < 0 { 
+		page = 0
+	}
+    if size <= 0 || size > 100 { 
+		size = 20 
+	}
 
     ids, err := s.tweetRepository.GetTweetsByAuthor(ctx, userID, page, size)
     if err != nil {

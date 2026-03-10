@@ -1,7 +1,7 @@
 package db
 
 import (
-	"aita/internal/pkg/testutils"
+	"aita/internal/testconfig"
 	"log"
 	"os"
 	"testing"
@@ -13,12 +13,12 @@ var (
     testSessionStore *redisSessionStore
     testTweetStore   *postgresTweetStore
 	testFollowStore  *postgresFollowStore
-    testContext      *testutils.TestContext 
+    testContext      *testConfig.TestContext 
 )
 
 func TestMain(m *testing.M) {
 	var teardown func()
-	testContext, teardown = testutils.RunTestMain(m)
+	testContext, teardown = testConfig.RunTestMain(m)
     log.Println("Migration successful!")
 	testUserStore = NewPostgresUserStore(testContext.TestDB)
 	testSessionStore = NewRedisSessionStore(testContext.TestRDB)

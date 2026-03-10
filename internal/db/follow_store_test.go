@@ -3,7 +3,7 @@ package db
 import (
 	"aita/internal/errcode"
 	"aita/internal/models"
-	"aita/internal/pkg/testutils"
+	testConfig "aita/internal/testconfig"
 	"context"
 	"testing"
 	"time"
@@ -98,7 +98,7 @@ func TestCreateFollowWhileErr(t *testing.T) {
 	})
 
 	t.Run("異常系: データベース内部エラー", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 
 		tempFollowStore := NewPostgresFollowStore(tempDB)
@@ -166,7 +166,7 @@ func TestGetFollowings(t *testing.T) {
     })
 
 	t.Run("異常系: サーバー内部エラー", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 		tempFollowStore := NewPostgresFollowStore(tempDB)
 		tempDB.Close()
@@ -230,7 +230,7 @@ func TestGetFollowers(t *testing.T) {
 	})
 
     t.Run("異常系: サーバー内部エラー(DB接続終了後)", func(t *testing.T) {
-        tempDB, err := testutils.OpenDB(testContext.DSN)
+        tempDB, err := testConfig.OpenDB(testContext.DSN)
         require.NoError(t, err)
         tempFollowStore := NewPostgresFollowStore(tempDB)
         tempDB.Close() 
@@ -302,7 +302,7 @@ func TestGetRelationship(t *testing.T) {
     })
 
     t.Run("異常系：データベース接続エラー", func(t *testing.T) {
-        tempDB, _ := testutils.OpenDB(testContext.DSN)
+        tempDB, _ := testConfig.OpenDB(testContext.DSN)
         tempFollowStore := NewPostgresFollowStore(tempDB)
         tempDB.Close() 
 
@@ -346,7 +346,7 @@ func TestDelete(t *testing.T) {
     })
 
     t.Run("異常系: サーバー内部エラー (DB切断)", func(t *testing.T) {
-        tempDB, _ := testutils.OpenDB(testContext.DSN)
+        tempDB, _ := testConfig.OpenDB(testContext.DSN)
         tempFollowStore := NewPostgresFollowStore(tempDB)
         tempDB.Close()
 

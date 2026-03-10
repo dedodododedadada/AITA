@@ -4,9 +4,10 @@ import (
 	"aita/internal/cache"
 	"aita/internal/db"
 	"aita/internal/pkg/crypto"
-	"aita/internal/pkg/testutils"
+	"aita/internal/pkg/messagequeue"
 	"aita/internal/repository"
 	"aita/internal/service"
+	"aita/internal/testconfig"
 	"log"
 	"os"
 	"testing"
@@ -24,12 +25,13 @@ var (
 	testTweetCache   repository.TweetCache
 	testTokemanager  service.TokenManager
 	testHasher       service.PasswordHasher
-	testContext      *testutils.TestContext
+	testContext      *testConfig.TestContext
+	testMQ           *messagequeue.RedisMQ
 )
 
 func TestMain(m *testing.M) {
 	var teardown func()
-	testContext, teardown = testutils.RunTestMain(m)
+	testContext, teardown = testConfig.RunTestMain(m)
 	log.Println("Database migration successful!")
 
 	testHasher = crypto.NewBcryptHasher(bcrypt.DefaultCost)
@@ -42,6 +44,10 @@ func TestMain(m *testing.M) {
 	testTweetStore = db.NewPostgresTweetStore(testContext.TestDB)
 	testFollowStore = db.NewPostgresFollowStore(testContext.TestDB)
 	
+	testStream := "test:aita:tweet:stream"
+	testGroup  := "test:fanout:group"
+	testConsumer := "test:consumer-1"
+	testMQ = messagequeue.NewRedisMQ(testContext.TestRDB, testStream, testGroup, testConsumer)
 	
     testContext.CleanupTestDB()
 

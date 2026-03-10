@@ -6,6 +6,7 @@ import (
 	"aita/internal/repository"
 	"aita/internal/service"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,12 +24,18 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
 	testPool, err := ants.NewPool(10)
     require.NoError(t, err, "テスト用コルーチンプールの初期化に失敗しました")
-    
     defer testPool.Release()
+
+	
+	
+	ctx := context.Background()
+	err = testMQ.InitMQ(ctx)
+	require.NoError(t, err, "テスト用MQの初期化に失敗しました")
+
 	userRepository := repository.NewUserRepository(testUserStore, testUserCache, testPool)
 	sesseionRepository := repository.NewSessionRepository(testSessionStore)
 	followRepository := repository.NewFollowRepository(testFollowStore, testFollowCache, testPool)
-	tweetRepository := repository.NewTweetRepository(testTweetStore, testTweetCache, testPool)
+	tweetRepository := repository.NewTweetRepository(testTweetStore, testTweetCache, testMQ, testPool)
 	userService := service.NewUserService(userRepository, testHasher)
 	sessionService := service.NewSessionService(sesseionRepository, userService, testTokemanager)
 	followService := service.NewFollowService(followRepository, userService)

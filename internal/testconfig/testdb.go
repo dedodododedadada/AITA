@@ -1,4 +1,4 @@
-package testutils
+package testConfig
 
 import (
 	"aita/internal/configuration"
@@ -15,12 +15,14 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/panjf2000/ants/v2"
 	"github.com/redis/go-redis/v9"
 )
 
 type TestContext struct {
-	TestDB *sqlx.DB
-	TestRDB *redis.Client
+	TestDB 		*sqlx.DB
+	TestRDB 	*redis.Client
+	TestPool	*ants.Pool   
 	DSN string
 }
 

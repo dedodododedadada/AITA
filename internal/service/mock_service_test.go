@@ -5,6 +5,7 @@ import (
 	"aita/internal/pkg/testutils"
 	"context"
 	"errors"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 )
@@ -108,6 +109,11 @@ func (m *mockTweetRepository) GetTweetsByAuthor(ctx context.Context, userID int6
 
 func(m *mockTweetRepository) Delete(ctx context.Context, tweetID int64) error {
 	args := m.Called(ctx, tweetID)
+	return args.Error(0)
+}
+
+func(m *mockTweetRepository) AsyncToMQ(ctx context.Context, tweetID, authorID int64, createdAt time.Time, action string) error{
+	args := m.Called(ctx, tweetID, authorID, createdAt, action) 
 	return args.Error(0)
 }
 

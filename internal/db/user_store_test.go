@@ -3,11 +3,12 @@ package db
 import (
 	"aita/internal/errcode"
 	"aita/internal/models"
-	"aita/internal/pkg/testutils"
+	"aita/internal/testconfig"
 	"context"
 	"strings"
 	"testing"
 	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,7 +89,7 @@ func TestCreateWhileAnotherErr(t *testing.T) {
 	})
 
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 
 		tempUserStore := NewPostgresUserStore(tempDB)
@@ -151,7 +152,7 @@ func TestGetByEmailWhileError(t *testing.T) {
 	})
 
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 
 		tempUserStore := NewPostgresUserStore(tempDB)
@@ -207,7 +208,7 @@ func TestGetFullByIDWhlieError(t *testing.T) {
 	})
 
 	t.Run("データベース切断時の時、ラップされたエラーを返すこと", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		require.NoError(t, err)
 
 		tempUserStore := NewPostgresUserStore(tempDB)
@@ -331,7 +332,7 @@ func TestIncreFollowerCountWhileErr(t *testing.T) {
     })
 
     t.Run("異常系：DB切断時のラップされたエラー", func(t *testing.T) {
-        tempDB, err := testutils.OpenDB(testContext.DSN)
+        tempDB, err := testConfig.OpenDB(testContext.DSN)
         require.NoError(t, err)
         tempUserStore := NewPostgresUserStore(tempDB)
         tempDB.Close()
@@ -453,7 +454,7 @@ func TestIncreFollowingCountWhileErr(t *testing.T) {
 	})
 
 	t.Run("データベース切断時、ラップされたエラーを返すこと", func(t *testing.T) {
-		tempDB, err := testutils.OpenDB(testContext.DSN)
+		tempDB, err := testConfig.OpenDB(testContext.DSN)
 		tempUserStore := NewPostgresUserStore(tempDB)
 
 		tempDB.Close()

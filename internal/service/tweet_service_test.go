@@ -18,6 +18,7 @@ import (
 func TestPostTweet(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	imageURL := utils.StringPtr("https://example.com/mock.jpg")
+	fixedTime := time.Now().UTC()
 	tests := []struct {
 		name      string
 		userID    int64
@@ -39,12 +40,19 @@ func TestPostTweet(t *testing.T) {
 					UserID:    101,
 					Content:   "Hello world",
 					ImageURL:  imageURL,
-					CreatedAt: time.Now().UTC(),
-					UpdatedAt: time.Now().UTC(),
+					CreatedAt: fixedTime,
+					UpdatedAt: fixedTime,
 				}
 				mt.On("Create", mock.Anything, mock.MatchedBy(func(t *dto.TweetRecord) bool {
 					return t.UserID == 101 && t.Content == "Hello world" && t.ImageURL == imageURL
 				})).Return(expectedTweet, nil)
+				mt.On("AsyncToMQ", 
+                    mock.Anything, 
+                    int64(1),           
+                    int64(101),          
+                    fixedTime,           
+                    dto.ActionCreate,    
+                ).Return(nil)
 			},
 			wantedErr: nil,
 		},

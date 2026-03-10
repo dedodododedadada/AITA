@@ -43,7 +43,20 @@ type Config struct{
 	RedisHost        	string
 	RedisPort        	string
 	RedisPassword    	string
-	BackfillPoolSize 	int
+	TweetStream      	string 
+    FanoutGroup      	string 
+    ConsumerName    	string 
+
+	DBMaxOpenConns    	int 
+    DBMaxIdleConns    	int 
+    DBConnMaxLifetime 	int 
+    RedisPoolSize     	int 
+	RedisMinIdleConns   int
+
+    WorkerPoolSize   	int 
+    BackfillPoolSize 	int 
+
+    //BackfillDBLimit 	int 
 }
 
 func LoadConfig() *Config{
@@ -66,28 +79,48 @@ func LoadConfig() *Config{
 		dbURL = os.Getenv("DB_URL")
 	}
 
-	poolSizeStr := os.Getenv("BACKFILL_POOL_SIZE")
-	poolSize, err := strconv.Atoi(poolSizeStr)
 
-	if err != nil || poolSize <= 0 {
-		poolSize = 100
-	}
+
 
 	cfg := &Config{
-		DBConnStr:     dbURL,
-		ServerAddress: ":8080",
-		AppEnv:        appEnv,
-		RedisHost:     os.Getenv("REDIS_HOST"),
-		RedisPort:     os.Getenv("REDIS_PORT"),
-		RedisPassword: os.Getenv("REDIS_PASSWORD"),
-		BackfillPoolSize: poolSize,
+		DBConnStr:     		dbURL,
+		ServerAddress: 		":8080",
+		AppEnv:        		appEnv,
+		RedisHost:     		os.Getenv("REDIS_HOST"),
+		RedisPort:     		os.Getenv("REDIS_PORT"),
+		RedisPassword: 		os.Getenv("REDIS_PASSWORD"),
+		TweetStream:      	os.Getenv("TWEET_STREAM"),
+        FanoutGroup:      	os.Getenv("FANOUT_GROUP"),
+        ConsumerName:     	os.Getenv("CONSUMER_NAME"),
+		DBMaxOpenConns:    	getEnvInt("DB_MAX_OPEN", 300),
+        DBMaxIdleConns:    	getEnvInt("DB_MAX_IDLE", 50),
+        DBConnMaxLifetime: 	getEnvInt("DB_MAX_LIFETIME", 30),
+		RedisPoolSize:    	getEnvInt("REDIS_POOL_SIZE", 500),
+		RedisMinIdleConns:  getEnvInt("REDIS_MIN_IDLE",20),
+		BackfillPoolSize: 	getEnvInt("BACKFILL_POOL_SIZE", 500),
+		WorkerPoolSize: 	getEnvInt("WORKER_POOL_SIZE", 2000),
+		//BackfillDBLimit:	getEnvInt("BACKFILL_DB_LIMIT",70),	
 	}
+
+	if cfg.TweetStream == "" { 
+		cfg.TweetStream = "aita:tweet:stream" 
+	}
+    if cfg.FanoutGroup == "" { 
+		cfg.FanoutGroup = "aita:fanout:group" 
+	}
+    if cfg.ConsumerName == "" {
+		hostname, _ := os.Hostname()
+        cfg.ConsumerName = "api-node-" + hostname
+    }
+
+
 
 	requiredFields := map[string]string{
         "DB_URL":         cfg.DBConnStr,
         "REDIS_HOST":     cfg.RedisHost,
         "REDIS_PORT":     cfg.RedisPort,
         "REDIS_PASSWORD": cfg.RedisPassword,
+        "TWEET_STREAM":   cfg.TweetStream, 
     }
 
 	for key, val := range requiredFields {
@@ -100,4 +133,11 @@ func LoadConfig() *Config{
 	return cfg
 }
 
-
+func getEnvInt(key string, defaultVal int) int {
+    if s := os.Getenv(key); s != "" {
+        if v, err := strconv.Atoi(s); err == nil {
+            return v
+        }
+    }
+    return defaultVal
+}
