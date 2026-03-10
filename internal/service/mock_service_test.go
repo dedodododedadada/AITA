@@ -95,6 +95,16 @@ func(m *mockTweetRepository) Update(ctx context.Context, newContent string, twee
 	return testutils.SafeGet[dto.TweetRecord](args, 0), args.Error(1)
 }
 
+func (m *mockTweetRepository) MultiGet(ctx context.Context, tweetIDs []int64) ([]*dto.TweetRecord, error) {
+	args := m.Called(ctx, tweetIDs)
+	return testutils.SafeGetSlice[*dto.TweetRecord](args, 0), args.Error(1)
+}
+
+func (m *mockTweetRepository) GetTweetsByAuthor(ctx context.Context, userID int64, page, size int) ([]int64, error) {
+	args := m.Called(ctx, userID, page, size)
+	return testutils.SafeGetSlice[int64](args, 0), args.Error(1)
+}
+
 
 func(m *mockTweetRepository) Delete(ctx context.Context, tweetID int64) error {
 	args := m.Called(ctx, tweetID)

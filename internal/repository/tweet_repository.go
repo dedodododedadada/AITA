@@ -4,7 +4,7 @@ import (
 	"aita/internal/dto"
 	"aita/internal/errcode"
 	"aita/internal/models"
-	"aita/internal/pkg/utils"
+	sf "aita/internal/pkg/singleflight"
 	"context"
 	"fmt"
 	"log/slog"
@@ -16,24 +16,25 @@ import (
 
 type TweetStore interface {
 	CreateTweet(ctx context.Context, tweet *models.Tweet) (*models.Tweet, error)
-	GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error) 
+	GetTweetByTweetID(ctx context.Context, tweetID int64) (*models.Tweet, error)
 	UpdateContent(ctx context.Context, newContent string, tweetID int64) (*models.Tweet, error)
-	DeleteTweet(ctx context.Context, tweetID int64) error 
+	DeleteTweet(ctx context.Context, tweetID int64) error
 	GetTweetsByTweetIDs(ctx context.Context, tweetIDS []int64) ([]*models.Tweet, error)
+	GetTweetIDsByAuthor(ctx context.Context, authorID int64, page, size int) ([]int64, error) 
 }
 
-type TweetCache interface{
+type TweetCache interface {
 	SetTweet(ctx context.Context, tweet *models.Tweet) error
 	GetTweet(ctx context.Context, tweetID int64) (*models.Tweet, error)
-	Invalidate(ctx context.Context, tweetID int64) error 
-	MultiGetTweets(ctx context.Context, tweetIDs []int64) (map[int64]*models.Tweet, error) 
+	Invalidate(ctx context.Context, tweetID int64) error
+	MultiGetTweets(ctx context.Context, tweetIDs []int64) (map[int64]*models.Tweet, error)
 	MultiSetTweets(ctx context.Context, tweets []*models.Tweet) error
 }
 
 type tweetRepository struct {
 	tweetStore TweetStore
 	tweetCache TweetCache
-	sfTweet	   *singleflight.Group
+	sfTweet    *singleflight.Group
 	pool       *ants.Pool
 }
 
@@ -41,10 +42,10 @@ func NewTweetRepository(ts TweetStore, tc TweetCache, p *ants.Pool) *tweetReposi
 	return &tweetRepository{
 		tweetStore: ts,
 		tweetCache: tc,
-		pool: p,
+		sfTweet: &singleflight.Group{},
+		pool:       p,
 	}
 }
-
 
 func (r *tweetRepository) Create(ctx context.Context, record *dto.TweetRecord) (*dto.TweetRecord, error) {
 	tweet := record.ToModel()
@@ -61,11 +62,11 @@ func (r *tweetRepository) Create(ctx context.Context, record *dto.TweetRecord) (
 	taskData := dbTweet
 
 	err = r.pool.Submit(func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		err := r.tweetCache.SetTweet(bgCtx, taskData)
-		if err != nil {
+		innerErr := r.tweetCache.SetTweet(bgCtx, taskData)
+		if innerErr != nil {
 			_ = r.tweetCache.Invalidate(bgCtx, taskData.ID)
 		}
 
@@ -78,7 +79,7 @@ func (r *tweetRepository) Create(ctx context.Context, record *dto.TweetRecord) (
 	return dto.NewTweetRecord(dbTweet), nil
 }
 
-func(r *tweetRepository) Update(ctx context.Context, newContent string, tweetID int64) (*dto.TweetRecord, error) {
+func (r *tweetRepository) Update(ctx context.Context, newContent string, tweetID int64) (*dto.TweetRecord, error) {
 	tweet, err := r.tweetStore.UpdateContent(ctx, newContent, tweetID)
 
 	if err != nil {
@@ -88,13 +89,12 @@ func(r *tweetRepository) Update(ctx context.Context, newContent string, tweetID 
 	_ = r.tweetCache.Invalidate(ctx, tweetID)
 
 	_ = r.pool.Submit(func() {
-        time.Sleep(800 * time.Millisecond)
-        
-        _ = r.tweetCache.Invalidate(context.Background(), tweetID)
-    })
+		time.Sleep(800 * time.Millisecond)
+
+		_ = r.tweetCache.Invalidate(context.Background(), tweetID)
+	})
 	return dto.NewTweetRecord(tweet), nil
 }
-
 
 func (r *tweetRepository) Delete(ctx context.Context, tweetID int64) error {
 	err := r.tweetStore.DeleteTweet(ctx, tweetID)
@@ -108,7 +108,7 @@ func (r *tweetRepository) Delete(ctx context.Context, tweetID int64) error {
 	return nil
 }
 
-func  (r *tweetRepository) Get(ctx context.Context, tweetID int64) (*dto.TweetRecord, error) {
+func (r *tweetRepository) Get(ctx context.Context, tweetID int64) (*dto.TweetRecord, error) {
 	tweet, err := r.tweetCache.GetTweet(ctx, tweetID)
 
 	if err == nil && tweet != nil {
@@ -116,8 +116,8 @@ func  (r *tweetRepository) Get(ctx context.Context, tweetID int64) (*dto.TweetRe
 	}
 
 	sfKey := fmt.Sprintf("tweet:%d", tweetID)
-	tweet, err = utils.GetDataWithSF(ctx, r.sfTweet, sfKey, func(ctx context.Context) (*models.Tweet, error) {
-		return r.tweetStore.GetTweetByTweetID(ctx, tweetID)
+	tweet, err = sf.GetDataWithSF(ctx, r.sfTweet, sfKey, func(innerCtx context.Context) (*models.Tweet, error) {
+		return r.tweetStore.GetTweetByTweetID(innerCtx, tweetID)
 	})
 
 	if err != nil {
@@ -129,22 +129,21 @@ func  (r *tweetRepository) Get(ctx context.Context, tweetID int64) (*dto.TweetRe
 	}
 
 	err = r.pool.Submit(func() {
-		backfillCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		backfillCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		err = r.tweetCache.SetTweet(backfillCtx, tweet)
-		if err != nil {
+		innerErr := r.tweetCache.SetTweet(backfillCtx, tweet)
+		if innerErr != nil {
 			r.tweetCache.Invalidate(context.Background(), tweet.ID)
 		}
 	})
 	if err != nil {
 		slog.Warn("Tweetバックフィルのタスク投入に失敗しました",
-            "tweet_id", tweetID,
-            "err", err,
-        )
-		r.tweetCache.Invalidate(context.Background(), tweet.ID)
+			"tweet_id", tweetID,
+			"err", err,
+		)
 	}
-	
+
 	return dto.NewTweetRecord(tweet), nil
 }
 
@@ -157,7 +156,7 @@ func (r *tweetRepository) MultiGet(ctx context.Context, tweetIDs []int64) ([]*dt
 	if tweetsMap == nil {
 		tweetsMap = make(map[int64]*models.Tweet, len(tweetIDs))
 	}
-	
+
 	missedTIDs := make([]int64, 0, len(tweetIDs))
 	for _, id := range tweetIDs {
 		if _, found := tweetsMap[id]; !found {
@@ -177,7 +176,7 @@ func (r *tweetRepository) MultiGet(ctx context.Context, tweetIDs []int64) ([]*dt
 		}
 
 		err = r.pool.Submit(func() {
-			backfillCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			backfillCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
 			_ = r.tweetCache.MultiSetTweets(backfillCtx, dbTweets)
@@ -185,9 +184,9 @@ func (r *tweetRepository) MultiGet(ctx context.Context, tweetIDs []int64) ([]*dt
 
 		if err != nil {
 			slog.Warn("Tweetリストの一括バックフィル投入に失敗しました",
-                "missed_count", len(missedTIDs),
-                "err", err,
-            )
+				"missed_count", len(missedTIDs),
+				"err", err,
+			)
 		}
 	}
 
@@ -199,4 +198,22 @@ func (r *tweetRepository) MultiGet(ctx context.Context, tweetIDs []int64) ([]*dt
 	}
 
 	return finalResults, nil
+}
+
+
+func (r *tweetRepository) GetTweetsByAuthor(ctx context.Context, userID int64, page, size int) ([]int64, error) {
+	if page < 0 || size <= 0 {
+		return []int64{}, nil
+	}
+
+	sfKey := fmt.Sprintf("GetMytweets:%d:page:%d:size%d", userID, page, size)
+	ids, err := sf.GetDataWithSF(ctx, r.sfTweet, sfKey, func(innerCtx context.Context) ([]int64, error) {
+		return r.tweetStore.GetTweetIDsByAuthor(innerCtx, userID, page, size)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return ids, nil
 }

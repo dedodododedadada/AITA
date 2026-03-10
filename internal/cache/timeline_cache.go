@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"aita/internal/models"
 	"aita/internal/pkg/utils"
 	"context"
 	"fmt"
@@ -11,23 +12,23 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type redisTimelineCache struct {
+type redisTimeLineCache struct {
 	client *redis.Client
 	prefix string
 }
 
-func NewRedisTimelineCache(c *redis.Client) *redisTimelineCache {
-	return &redisTimelineCache{
+func NewRedisTimelineCache(c *redis.Client) *redisTimeLineCache {
+	return &redisTimeLineCache{
 		client: c,
 		prefix: "timeline:",
 	}
 }
 
-func (c *redisTimelineCache) timelineKey(userID int64) string {
+func (c *redisTimeLineCache) timelineKey(userID int64) string {
 	return fmt.Sprintf("%s%d", c.prefix, userID)
 }
 
-func (c *redisTimelineCache) PushBatch(ctx context.Context, tweetID int64, userIDs []int64, createdAt time.Time) error {
+func (c *redisTimeLineCache) PushBatch(ctx context.Context, tweetID int64, userIDs []int64, createdAt time.Time) error {
 	pipe := c.client.Pipeline()
 	score := float64(createdAt.Unix())
 
@@ -52,43 +53,7 @@ func (c *redisTimelineCache) PushBatch(ctx context.Context, tweetID int64, userI
 	return nil
 }
 
-func (c *redisTimelineCache) FindRange(ctx context.Context, userID int64, start, stop int64) ([]int64, error) {
-	if  start >= stop {
-		return []int64{}, nil
-	}
-
-	tlKey := c.timelineKey(userID)
-	res, err := c.client.ZRangeArgs(ctx, redis.ZRangeArgs{
-		Key: tlKey,
-		Start: start,
-		Stop: stop,
-		Rev: true,
-	}).Result()
-	if err != nil {
-		slog.Error("[Redis Error] タイムラインの取得に失敗しました",
-			"user_id", userID,
-			"key", tlKey,
-			"start", start,
-			"stop", stop,
-			"err", err,
-		)
-		return nil, err
-	}
-
-	tweetIDs := make([]int64, 0, len(res)) 
-	for _, idStr := range res {
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			continue
-		}
-		tweetIDs = append(tweetIDs, id)
-	}
-
-	return tweetIDs, nil
-}
-
-
-func(c *redisTimelineCache) RecallTweet(ctx context.Context, tweetID int64, userIDs []int64) error {
+func(c *redisTimeLineCache) RecallTweet(ctx context.Context, tweetID int64, userIDs []int64) error {
 	if len(userIDs) == 0 {
 		return nil
 	}
@@ -119,4 +84,64 @@ func(c *redisTimelineCache) RecallTweet(ctx context.Context, tweetID int64, user
 	}
 
 	return nil
+}
+
+func (c *redisTimeLineCache) FindRange(ctx context.Context, userID int64, start, stop int64) ([]int64, error) {
+	if  start >= stop {
+		return []int64{}, nil
+	}
+
+	tlKey := c.timelineKey(userID)
+	res, err := c.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key: tlKey,
+		Start: start,
+		Stop: stop,
+		Rev: true,
+	}).Result()
+	if err != nil {
+		slog.Error("[Redis Error] タイムラインの取得に失敗しました",
+			"user_id", userID,
+			"key", tlKey,
+			"start", start,
+			"stop", stop,
+			"err", err,
+		)
+		return nil, err
+	}
+
+	tweetIDs := make([]int64, 0, len(res)) 
+	for _, idStr := range res {
+		id, err := utils.ParseInt64WithErr(idStr)
+		if err != nil {
+			continue
+		}
+		tweetIDs = append(tweetIDs, id)
+	}
+
+	return tweetIDs, nil
+}
+
+func (c *redisTimeLineCache) BackfillIDs(ctx context.Context, userID int64, tweets []*models.Tweet) error {
+	if len(tweets) == 0 {
+		return nil
+	}
+
+	tlKey := c.timelineKey(userID)
+	pipe := c.client.Pipeline()
+
+	for _, t := range tweets {
+		pipe.ZAdd(ctx, tlKey, redis.Z{
+			Score: float64(t.CreatedAt.Unix()),
+			Member: t.ID,
+		})
+	}
+
+	pipe.ZRemRangeByRank(ctx, tlKey, 0, -1001)
+
+	ttl := utils.GetRandomExpiration(72, 3)
+	pipe.Expire(ctx, tlKey, ttl)
+
+	_, error := pipe.Exec(ctx)
+
+	return error
 }

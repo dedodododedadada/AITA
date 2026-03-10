@@ -12,6 +12,8 @@ type TweetRepository interface {
 	Get(ctx context.Context, tweetID int64) (*dto.TweetRecord, error) 
 	Update(ctx context.Context, newContent string, tweetID int64) (*dto.TweetRecord, error) 
 	Delete(ctx context.Context, tweetID int64) error 
+	MultiGet(ctx context.Context, tweetIDs []int64) ([]*dto.TweetRecord, error)
+	GetTweetsByAuthor(ctx context.Context, userID int64, page, size int) ([]int64, error)
 }
 
 type tweetService struct {
@@ -120,4 +122,41 @@ func (s *tweetService) RemoveTweet(ctx context.Context, tweetID int64, userID in
 	}
 
 	return nil
+}
+
+
+func (s *tweetService) GetTweets(ctx context.Context, tweetIDs []int64) ([]*dto.TweetRecord, error) {
+    if len(tweetIDs) == 0 {
+        return []*dto.TweetRecord{}, nil
+    }
+
+    tweets, err := s.tweetRepository.MultiGet(ctx, tweetIDs)
+    if err != nil {
+        return nil, fmt.Errorf("TimeLineService.GetTweets: ツイートリストの一括取得に失敗しました: %w", err)
+    }
+
+    return tweets, nil
+}
+
+func (s *tweetService) GetMyTweets(ctx context.Context, userID int64, page, size int) ([]*dto.TweetRecord, error) {
+    if userID <= 0 {
+        return nil, errcode.ErrInvalidUserID
+    }
+
+    ids, err := s.tweetRepository.GetTweetsByAuthor(ctx, userID, page, size)
+    if err != nil {
+        return nil, fmt.Errorf("TimeLineService.GetMyTweets: 投稿一覧の ID 取得に失敗しました (user_id: %d): %w", userID, err)
+    }
+
+    if len(ids) == 0 {
+        return []*dto.TweetRecord{}, nil
+    }
+
+    tweets, err := s.tweetRepository.MultiGet(ctx, ids)
+    if err != nil {
+        return nil, fmt.Errorf("TimeLineService.GetMyTweets: 投稿内容のバルク変換に失敗しました (user_id: %d, count: %d): %w", 
+            userID, len(ids), err)
+    }
+
+    return tweets, nil
 }

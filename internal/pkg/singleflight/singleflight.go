@@ -1,4 +1,4 @@
-package utils
+package sf
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func GetDataWithSF[T any](ctx context.Context, sf *singleflight.Group, key strin
 		return zero, ctx.Err()
 	}
 
-	innerCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	innerCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	ch := sf.DoChan(key, func() (interface{}, error) {
@@ -43,6 +43,10 @@ func GetDataWithSF[T any](ctx context.Context, sf *singleflight.Group, key strin
 			return zero, res.Err
 		}
 
-		return res.Val.(T), nil
+		val, ok := res.Val.(T)
+		if !ok {
+			return zero, fmt.Errorf("AITA SF: type assertion failed, expected %T", zero)
+        }
+		return val, nil
 	}
 }

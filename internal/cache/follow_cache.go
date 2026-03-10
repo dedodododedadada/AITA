@@ -191,7 +191,7 @@ func (c *redisFollowCache) findIDsFromZSet(ctx context.Context, key string) ([]i
 
 	ids := make([]int64, 0, len(strs))
 	for  _, s := range strs {
-		id, err := strconv.ParseInt(s, 10, 64) 
+		id, err := utils.ParseInt64WithErr(s)
 		if err != nil {
 			slog.Warn("[Redis Data Error] IDのパースに失敗しました", "value", s, "err", err)
 			continue

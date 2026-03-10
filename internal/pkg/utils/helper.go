@@ -3,6 +3,7 @@ package utils
 import (
 	"math/rand/v2"
 	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -48,4 +49,14 @@ func GetRandomExpiration(base, jitter time.Duration) time.Duration {
 	}
 
 	return rBase + rand.N(jitter+1)
+}
+
+
+func ParseInt64WithErr(s string) (int64, error) {
+	return strconv.ParseInt(s, 10, 64)
+}
+
+func ParseInt64(s string) int64 {
+	i, _ := strconv.ParseInt(s, 10, 64)
+    return i
 }

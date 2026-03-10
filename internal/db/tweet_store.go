@@ -154,3 +154,27 @@ func (s *postgresTweetStore) GetTweetsByTweetIDs(ctx context.Context, tweetIDs [
 
 	return tweets, nil
 }
+
+func (s *postgresTweetStore) GetTweetIDsByAuthor(ctx context.Context, authorID int64, page, size int) ([]int64, error) {
+	offset := page * size
+	query := `SELCT id FROM tweets WHERE user_id = ? ORERDED BY id DESC LIMIT $2 OFFSET $3`
+	rows, err := s.BaseStore.conn(ctx).QueryContext(ctx, query, authorID, size, offset)
+	if err != nil {
+		return nil, fmt.Errorf("%dのツイートの取得に失敗しました: %w", authorID, err)
+	}
+	defer rows.Close()
+
+    var ids []int64
+    for rows.Next() {
+        var id int64
+        if err := rows.Scan(&id); err != nil {
+            return nil, err
+        }
+        ids = append(ids, id)
+    }
+	if err = rows.Err(); err != nil {
+        return nil, fmt.Errorf("行の反復処理エラー: %w", err)
+    }
+
+    return ids, nil
+}

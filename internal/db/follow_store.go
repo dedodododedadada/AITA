@@ -72,6 +72,7 @@ func (s *postgresFollowStore) GetFollowings(ctx context.Context, followerID int6
 		FROM follows 
 		WHERE follower_id = $1
 		ORDER BY created_at DESC, id DESC
+		LIMIT 1000
 	`
 	
 	err := s.BaseStore.conn(ctx).SelectContext(ctx, &followings, query, followerID)
@@ -93,6 +94,7 @@ func (s *postgresFollowStore) GetFollowers(ctx context.Context, followingID int6
 		FROM follows 
 		WHERE following_id = $1
 		ORDER BY created_at DESC, id DESC
+		LIMIT 1000
 	`
 
 	err := s.database.SelectContext(ctx, &followers, query, followingID)

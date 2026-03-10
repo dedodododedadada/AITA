@@ -4,7 +4,7 @@ import (
 	"aita/internal/contextkeys"
 	"aita/internal/dto"
 	"aita/internal/errcode"
-	"strconv"
+	"aita/internal/pkg/utils"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -41,7 +41,7 @@ func GetAuthContext(c *gin.Context) (*dto.AuthContext, error) {
 
 func GetIDParam(c *gin.Context, name string)(int64, error) {
 	idStr := c.Param(name)
-	id, err :=strconv.ParseInt(idStr, 10, 64)
+	id, err :=utils.ParseInt64WithErr(idStr)
 	if err != nil || id <= 0 {
 		return 0, errcode.ErrInvalidIDFormat
 	}
