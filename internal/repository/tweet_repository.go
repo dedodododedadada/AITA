@@ -31,23 +31,19 @@ type TweetCache interface {
 	MultiSetTweets(ctx context.Context, tweets []*models.Tweet) error
 }
 
-type Producer interface {
-	 Enqueue(ctx context.Context, values map[string]any) error 
-}
+
 
 type tweetRepository struct {
 	tweetStore TweetStore
 	tweetCache TweetCache
-	producer   Producer
 	sfTweet    *singleflight.Group
 	pool       *ants.Pool
 }
 
-func NewTweetRepository(ts TweetStore, tc TweetCache, pro Producer, p *ants.Pool) *tweetRepository {
+func NewTweetRepository(ts TweetStore, tc TweetCache, p *ants.Pool) *tweetRepository {
 	return &tweetRepository{
 		tweetStore: ts,
 		tweetCache: tc,
-		producer: pro,
 		sfTweet: &singleflight.Group{},
 		pool:       p,
 	}
@@ -224,30 +220,3 @@ func (r *tweetRepository) GetTweetsByAuthor(ctx context.Context, userID int64, p
 	return ids, nil
 }
 
-
-func (r *tweetRepository) AsyncToMQ(ctx context.Context, tweetID, authorID int64, createdAt time.Time, action string) error {
-	task := dto.NewFanoutTask(tweetID, authorID, createdAt, action)
-	taskMap := task.ToMap()
-	err := r.pool.Submit(func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		
-		innerErr := r.producer.Enqueue(bgCtx, taskMap)
-		if innerErr != nil {
-			slog.Error("MQへの非同期書き込みに失敗しました", 
-    			"tweet_id", tweetID, 
-				"action", action, 
-				"err", innerErr,
-			)
-		}
-	})
-	if err != nil {
-        slog.Warn("アンツプールへのタスク投入に失敗しました", 
-            "tweet_id", tweetID, 
-            "action", action,
-            "err", err,
-        )
-    }
-	
-	return nil
-}

@@ -16,15 +16,22 @@ type TweetRepository interface {
 	Delete(ctx context.Context, tweetID int64) error 
 	MultiGet(ctx context.Context, tweetIDs []int64) ([]*dto.TweetRecord, error)
 	GetTweetsByAuthor(ctx context.Context, userID int64, page, size int) ([]int64, error)
+}
+
+type MessageSender interface {
 	AsyncToMQ(ctx context.Context, tweetID, authorID int64, createdAt time.Time, action string) error
 }
 
 type tweetService struct {
 	tweetRepository TweetRepository
+	messageSender 	MessageSender
 }
 
-func NewTweetService(tr TweetRepository) *tweetService {
-	return &tweetService{tweetRepository: tr}
+func NewTweetService(tr TweetRepository, m MessageSender) *tweetService {
+	return &tweetService{
+		tweetRepository: tr,
+		messageSender: m,
+	}
 }
 
 func (s *tweetService) PostTweet(ctx context.Context, userID int64, content string, imageURL *string) (*dto.TweetRecord, error) {
@@ -47,7 +54,7 @@ func (s *tweetService) PostTweet(ctx context.Context, userID int64, content stri
 		return nil, fmt.Errorf("ツイートの挿入に失敗しました: %w", err)
 	}
 
-	_ = s.tweetRepository.AsyncToMQ(
+	_ = s.messageSender.AsyncToMQ(
 		ctx,
 		savedTweet.ID,
 		savedTweet.UserID,
@@ -142,7 +149,7 @@ func (s *tweetService) RemoveTweet(ctx context.Context, tweetID int64, userID in
 		return fmt.Errorf("ツイートの削除に失敗しました: %w", err)
 	}
 
-		_ = s.tweetRepository.AsyncToMQ(
+	_ = s.messageSender.AsyncToMQ(
 		ctx,
 		deletedTweet.ID,
 		deletedTweet.UserID,

@@ -112,7 +112,11 @@ func(m *mockTweetRepository) Delete(ctx context.Context, tweetID int64) error {
 	return args.Error(0)
 }
 
-func(m *mockTweetRepository) AsyncToMQ(ctx context.Context, tweetID, authorID int64, createdAt time.Time, action string) error{
+type mockMessageSender struct {
+	mock.Mock
+}
+
+func(m *mockMessageSender) AsyncToMQ(ctx context.Context, tweetID, authorID int64, createdAt time.Time, action string) error{
 	args := m.Called(ctx, tweetID, authorID, createdAt, action) 
 	return args.Error(0)
 }

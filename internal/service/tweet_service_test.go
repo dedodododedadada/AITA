@@ -23,7 +23,7 @@ func TestPostTweet(t *testing.T) {
 		name      string
 		userID    int64
 		inputBody *app.CreateTweetRequest
-		setupMock func(mt *mockTweetRepository)
+		setupMock func(mt *mockTweetRepository, mm *mockMessageSender)
 		wantedErr error
 		errMsg    string
 	}{
@@ -34,7 +34,7 @@ func TestPostTweet(t *testing.T) {
 				Content:  "Hello world",
 				ImageURL: imageURL,
 			},
-			setupMock: func(mt *mockTweetRepository) {
+			setupMock: func(mt *mockTweetRepository, mm *mockMessageSender) {
 				expectedTweet := &dto.TweetRecord{
 					ID:        1,
 					UserID:    101,
@@ -46,7 +46,7 @@ func TestPostTweet(t *testing.T) {
 				mt.On("Create", mock.Anything, mock.MatchedBy(func(t *dto.TweetRecord) bool {
 					return t.UserID == 101 && t.Content == "Hello world" && t.ImageURL == imageURL
 				})).Return(expectedTweet, nil)
-				mt.On("AsyncToMQ", 
+				mm.On("AsyncToMQ", 
                     mock.Anything, 
                     int64(1),           
                     int64(101),          
@@ -62,7 +62,7 @@ func TestPostTweet(t *testing.T) {
 			inputBody: &app.CreateTweetRequest{
 				Content: "Hello world",
 			},
-			setupMock: func(mt *mockTweetRepository) {},
+			setupMock: func(mt *mockTweetRepository, mm *mockMessageSender) {},
 			wantedErr: errcode.ErrInvalidUserID,
 		},
 		{
@@ -71,7 +71,7 @@ func TestPostTweet(t *testing.T) {
 			inputBody: &app.CreateTweetRequest{
 				Content: "",
 			},
-			setupMock: func(mt *mockTweetRepository) {},
+			setupMock: func(mt *mockTweetRepository, mm *mockMessageSender) {},
 			wantedErr: errcode.ErrRequiredFieldMissing,
 		},
 		{
@@ -81,7 +81,7 @@ func TestPostTweet(t *testing.T) {
 				Content:  "Hello world",
 				ImageURL: imageURL,
 			},
-			setupMock: func(mt *mockTweetRepository) {
+			setupMock: func(mt *mockTweetRepository, mm *mockMessageSender) {
 				mt.On("Create", mock.Anything, mock.MatchedBy(func(t *dto.TweetRecord) bool {
 					return t.UserID == 99999 && t.Content == "Hello world"
 				})).Return(nil, errMockInternal)
@@ -94,8 +94,9 @@ func TestPostTweet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mt := new(mockTweetRepository)
-			tt.setupMock(mt)
-			svc := NewTweetService(mt)
+			mm := new(mockMessageSender)
+			tt.setupMock(mt, mm)
+			svc := NewTweetService(mt, mm)
 			ctx := context.Background()
 
 			res, err := svc.PostTweet(ctx, tt.userID, tt.inputBody.Content, tt.inputBody.ImageURL)
@@ -164,8 +165,9 @@ func TestFetchTweet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mt := new(mockTweetRepository)
+			mm := new(mockMessageSender)
 			tt.setupMock(mt)
-			svc := NewTweetService(mt)
+			svc := NewTweetService(mt, mm)
 			ctx := context.Background()
 			res, err := svc.FetchTweet(ctx, tt.inputTweetID)
 
@@ -262,8 +264,9 @@ func TestToMyTweet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mt := new(mockTweetRepository)
+			mm := new(mockMessageSender)
 			tt.setupMock(mt)
-			svc := NewTweetService(mt)
+			svc := NewTweetService(mt, mm)
 			ctx := context.Background()
 			res, err := svc.ToMyTweet(ctx, tt.inputTweetID, tt.inputUserID)
 
@@ -397,8 +400,9 @@ func TestEditTweet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mt := new(mockTweetRepository)
+			mm := new(mockMessageSender)
 			tt.setupMock(mt)
-			svc := NewTweetService(mt)
+			svc := NewTweetService(mt, mm)
 
 			res, bool, err := svc.EditTweet(context.Background(), tt.inputContent, tt.inputTweetID, tt.inputUserID)
 
@@ -425,12 +429,12 @@ func TestEditTweet(t *testing.T) {
 
 func TestRemoveTweet(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-
+	fixedTime := time.Now().UTC()
 	tests := []struct {
 		name         string
 		inputTweetID int64
 		inputUserID  int64
-		setupMock    func(mt *mockTweetRepository)
+		setupMock    func(mt *mockTweetRepository,mm *mockMessageSender)
 		wantedErr    error
 		errMsg       string
 	}{
@@ -438,10 +442,11 @@ func TestRemoveTweet(t *testing.T) {
 			name:         "正常系: 自分のツイートが正常に削除される",
 			inputTweetID: 201,
 			inputUserID:  202,
-			setupMock: func(mt *mockTweetRepository) {
-				existingTweet := &dto.TweetRecord{ID: 201, UserID: 202}
+			setupMock: func(mt *mockTweetRepository, mm *mockMessageSender) {
+				existingTweet := &dto.TweetRecord{ID: 201, UserID: 202, CreatedAt: fixedTime}
 				mt.On("Get", mock.Anything, int64(201)).Return(existingTweet, nil)
 				mt.On("Delete", mock.Anything, int64(201)).Return(nil)
+				mm.On("AsyncToMQ", mock.Anything, int64(201), int64(202), fixedTime, dto.ActionDelete).Return(nil)
 			},
 			wantedErr: nil,
 		},
@@ -449,7 +454,7 @@ func TestRemoveTweet(t *testing.T) {
 			name:         "異常系: ツイートが存在しない場合は削除不可",
 			inputTweetID: 404,
 			inputUserID:  202,
-			setupMock: func(mt *mockTweetRepository) {
+			setupMock: func(mt *mockTweetRepository, mm *mockMessageSender) {
 				mt.On("Get", mock.Anything, int64(404)).Return(nil, errcode.ErrTweetNotFound)
 			},
 			wantedErr: errcode.ErrTweetNotFound,
@@ -458,7 +463,7 @@ func TestRemoveTweet(t *testing.T) {
 			name:         "異常系: 他人のツイートは削除不可（権限エラー）",
 			inputTweetID: 201,
 			inputUserID:  999,
-			setupMock: func(mt *mockTweetRepository) {
+			setupMock: func(mt *mockTweetRepository, mm *mockMessageSender) {
 				existingTweet := &dto.TweetRecord{ID: 201, UserID: 202}
 				mt.On("Get", mock.Anything, int64(201)).Return(existingTweet, nil)
 			},
@@ -468,7 +473,7 @@ func TestRemoveTweet(t *testing.T) {
 			name:         "異常系: DBエラーによる削除失敗",
 			inputTweetID: 201,
 			inputUserID:  202,
-			setupMock: func(mt *mockTweetRepository) {
+			setupMock: func(mt *mockTweetRepository, mm *mockMessageSender) {
 				existingTweet := &dto.TweetRecord{ID: 201, UserID: 202}
 				mt.On("Get", mock.Anything, int64(201)).Return(existingTweet, nil)
 				mt.On("Delete", mock.Anything, int64(201)).Return(errMockInternal)
@@ -481,8 +486,9 @@ func TestRemoveTweet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mt := new(mockTweetRepository)
-			tt.setupMock(mt)
-			svc := NewTweetService(mt)
+			mm := new(mockMessageSender)
+			tt.setupMock(mt, mm)
+			svc := NewTweetService(mt, mm)
 			ctx := context.Background()
 
 			err := svc.RemoveTweet(ctx, tt.inputTweetID, tt.inputUserID)

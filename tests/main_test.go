@@ -16,17 +16,18 @@ import (
 )
 
 var (
-	testUserStore    repository.UserStore  
-	testUserCache    repository.UserCache 
-	testFollowStore  repository.FollowStore
-	testFollowCache  repository.FollowCache
-	testSessionStore repository.SessionStore
-	testTweetStore   repository.TweetStore
-	testTweetCache   repository.TweetCache
-	testTokemanager  service.TokenManager
-	testHasher       service.PasswordHasher
-	testContext      *testConfig.TestContext
-	testMQ           *messagequeue.RedisMQ
+	testUserStore    	repository.UserStore  
+	testUserCache    	repository.UserCache 
+	testFollowStore  	repository.FollowStore
+	testFollowCache  	repository.FollowCache
+	testSessionStore 	repository.SessionStore
+	testTweetStore   	repository.TweetStore
+	testTweetCache   	repository.TweetCache
+	testTimeLineCache   repository.TimeLineCache
+	testTokemanager  	service.TokenManager
+	testHasher       	service.PasswordHasher
+	testContext      	*testConfig.TestContext
+	testMQ           	*messagequeue.RedisMQ
 )
 
 func TestMain(m *testing.M) {
@@ -35,10 +36,11 @@ func TestMain(m *testing.M) {
 	log.Println("Database migration successful!")
 
 	testHasher = crypto.NewBcryptHasher(bcrypt.DefaultCost)
-	testTokemanager = crypto.NewTokenManager()
+	testTokemanager = crypto.NewTokenManager() 
 	testUserCache = cache.NewRedisUserCache(testContext.TestRDB)
 	testFollowCache = cache.NewRedisFollowCache(testContext.TestRDB)
 	testTweetCache = cache.NewRedisTweetCache(testContext.TestRDB)
+	testTimeLineCache = cache.NewRedisTimelineCache(testContext.TestRDB)
 	testUserStore = db.NewPostgresUserStore(testContext.TestDB)
 	testSessionStore = db.NewRedisSessionStore(testContext.TestRDB)
 	testTweetStore = db.NewPostgresTweetStore(testContext.TestDB)

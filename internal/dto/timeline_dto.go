@@ -37,10 +37,28 @@ func (t *FanoutTask) ToMap() map[string]any {
     }
 }
 
-func (t *FanoutTask) FromMap(msgID string, values map[string]any) {
-    t.MsgID = msgID
-    t.TweetID = utils.ParseInt64(values["tweet_id"].(string))
-    t.AuthorID = utils.ParseInt64(values["author_id"].(string))
-    t.CreatedAt = time.Unix(utils.ParseInt64(values["at"].(string)), 0)
-    t.Action = values["action"].(string)
+func (t *FanoutTask) FromMap(msgID string, values map[string]any) error {
+	if msgID == "" {
+		return fmt.Errorf("FromMap: メッセージIDが空です")
+	}
+	tweetIDStr, ok1 := values["tweet_id"].(string)
+    authorIDStr, ok2 := values["author_id"].(string)
+    atStr, ok3 := values["at"].(string)
+    action, ok4 := values["action"].(string)
+
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return fmt.Errorf(
+			"FromMap: 必須フィールドの欠落または型エラー (tweet_id:%v, author_id:%v, at:%v, action:%v)",
+			ok1, ok2, ok3, ok4)
+	}
+
+    t.TweetID = utils.ParseInt64(tweetIDStr)
+    t.AuthorID = utils.ParseInt64(authorIDStr)
+    t.CreatedAt = time.Unix(utils.ParseInt64(atStr), 0)
+    t.Action = action
+
+	if t.TweetID <= 0 || t.AuthorID <= 0 {
+        return fmt.Errorf("FromMap: IDを0にすることはできません")
+    }
+	return nil
 }

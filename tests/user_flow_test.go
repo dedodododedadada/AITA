@@ -3,6 +3,7 @@ package tests
 import (
 	"aita/internal/api"
 	"aita/internal/pkg/app"
+	"aita/internal/producer"
 	"aita/internal/repository"
 	"aita/internal/service"
 	"bytes"
@@ -24,6 +25,8 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	testContext.CleanupTestDB()
 	testPool, err := ants.NewPool(10)
     require.NoError(t, err, "テスト用コルーチンプールの初期化に失敗しました")
+	testWorkerPool, err := ants.NewPool(50)
+	require.NoError(t, err, "テスト用ワーカーコルーチンプールの初期化に失敗しました")
     defer testPool.Release()
 
 	
@@ -32,14 +35,15 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	err = testMQ.InitMQ(ctx)
 	require.NoError(t, err, "テスト用MQの初期化に失敗しました")
 
+	fanoutProduer := producer.NewFanoutProducer(testMQ, testWorkerPool)
 	userRepository := repository.NewUserRepository(testUserStore, testUserCache, testPool)
 	sesseionRepository := repository.NewSessionRepository(testSessionStore)
 	followRepository := repository.NewFollowRepository(testFollowStore, testFollowCache, testPool)
-	tweetRepository := repository.NewTweetRepository(testTweetStore, testTweetCache, testMQ, testPool)
+	tweetRepository := repository.NewTweetRepository(testTweetStore, testTweetCache, testPool)
 	userService := service.NewUserService(userRepository, testHasher)
 	sessionService := service.NewSessionService(sesseionRepository, userService, testTokemanager)
 	followService := service.NewFollowService(followRepository, userService)
-	tweetService := service.NewTweetService(tweetRepository)
+	tweetService := service.NewTweetService(tweetRepository, fanoutProduer)
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
 	followHandler := api.NewFollowHandler(followService)
