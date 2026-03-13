@@ -158,7 +158,7 @@ func main() {
 
 	slog.Info("Main: リソースを解放しています...")
 	
-	WorkerPool.Release()
+	workerPool.Release()
     backfillPool.Release()
 	
 	database.Close()
