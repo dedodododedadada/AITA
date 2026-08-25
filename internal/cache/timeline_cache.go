@@ -36,7 +36,7 @@ func (c *redisTimeLineCache) PushBatch(ctx context.Context, tweetID int64, userI
 		tlKey := c.timelineKey(id)
 		pipe.ZAdd(ctx, tlKey, redis.Z{Score: score, Member: tweetID})
 		pipe.ZRemRangeByRank(ctx, tlKey, 0, -1001)
-		ttl := utils.GetRandomExpiration(72, 3)
+		ttl := utils.GetRandomExpiration(72 * time.Hour, 3 * time.Hour)
 		pipe.Expire(ctx, tlKey, ttl)
 	}
 
