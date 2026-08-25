@@ -157,7 +157,7 @@ func (s *postgresTweetStore) GetTweetsByTweetIDs(ctx context.Context, tweetIDs [
 
 func (s *postgresTweetStore) GetTweetIDsByAuthor(ctx context.Context, authorID int64, page, size int) ([]int64, error) {
 	offset := page * size
-	query := `SELCT id FROM tweets WHERE user_id = ? ORERDED BY id DESC LIMIT $2 OFFSET $3`
+	query := `SELECT id FROM tweets WHERE user_id = $1 ORERDED BY id DESC LIMIT $2 OFFSET $3`
 	rows, err := s.BaseStore.conn(ctx).QueryContext(ctx, query, authorID, size, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%dのツイートの取得に失敗しました: %w", authorID, err)
