@@ -97,7 +97,7 @@ func (s *postgresFollowStore) GetFollowers(ctx context.Context, followingID int6
 		LIMIT 1000
 	`
 
-	err := s.database.SelectContext(ctx, &followers, query, followingID)
+	err := s.BaseStore.conn(ctx).SelectContext(ctx, &followers, query, followingID)
 	if err != nil {
 		return nil, fmt.Errorf("フォロワーリストの取得に失敗しました: %w", err)
 	}
@@ -115,7 +115,7 @@ func (s *postgresFollowStore) GetRelationship(ctx context.Context, userA, userB 
             EXISTS(SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2) AS following,
             EXISTS(SELECT 1 FROM follows WHERE follower_id = $2 AND following_id = $1) AS followed_by
     `
-	err := s.database.GetContext(ctx, &relationship, query, userA, userB)
+	err := s.BaseStore.conn(ctx).GetContext(ctx, &relationship, query, userA, userB)
     if err != nil {
         return nil, fmt.Errorf("関係性の取得に失敗しました: %w", err)
     }
@@ -123,14 +123,14 @@ func (s *postgresFollowStore) GetRelationship(ctx context.Context, userA, userB 
     return &relationship, nil
 }
 
-func (s *postgresFollowStore) Delete(ctx context.Context, followerID, followingID int64) error {
-    query := `DELETE FROM follows WHERE follower_id = $1 AND following_id = $2`
-    _, err := s.database.ExecContext(ctx, query, followerID, followingID)
-    if err != nil {
-        return fmt.Errorf("フォロー解除に失敗しました: %w", err)
-    }
-    return nil
-}
+	func (s *postgresFollowStore) Delete(ctx context.Context, followerID, followingID int64) error {
+		query := `DELETE FROM follows WHERE follower_id = $1 AND following_id = $2`
+		_, err := s.BaseStore.conn(ctx).ExecContext(ctx, query, followerID, followingID)
+		if err != nil {
+			return fmt.Errorf("フォロー解除に失敗しました: %w", err)
+		}
+		return nil
+	}
 
 
 
