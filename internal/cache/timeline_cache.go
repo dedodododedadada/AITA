@@ -87,7 +87,7 @@ func(c *redisTimeLineCache) RecallTweet(ctx context.Context, tweetID int64, user
 }
 
 func (c *redisTimeLineCache) FindRange(ctx context.Context, userID int64, start, stop int64) ([]int64, error) {
-	if  start >= stop {
+	if  start < 0 || (stop >= 0 && start > stop) {
 		return []int64{}, nil
 	}
 
