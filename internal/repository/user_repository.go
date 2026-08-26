@@ -84,8 +84,8 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*dto.Use
 func (r *userRepository) GetFullByID(ctx context.Context, userID int64) (*dto.UserRecord, error) {
 	sfKey := fmt.Sprintf("users:%d", userID)
 
-	user, err := sf.GetDataWithSF(ctx, r.sfUser, sfKey, func(c context.Context) (*models.User, error) {
-		return r.userStore.GetFullByID(ctx, userID)
+	user, err := sf.GetDataWithSF(ctx, r.sfUser, sfKey, func(innerCtx context.Context) (*models.User, error) {
+		return r.userStore.GetFullByID(innerCtx, userID)
 	})
 
 	if err != nil {
@@ -168,8 +168,8 @@ func (r *userRepository) Exists(ctx context.Context, id int64) (bool, error) {
 	}
 
 	sfKey := fmt.Sprintf("exists:%d", id)
-	exists, err := sf.GetDataWithSF(ctx, r.sfUser, sfKey, func(c context.Context) (bool, error) {
-		_, dbErr := r.userStore.GetFullByID(ctx, id)
+	exists, err := sf.GetDataWithSF(ctx, r.sfUser, sfKey, func(innerCtx context.Context) (bool, error) {
+		_, dbErr := r.userStore.GetFullByID(innerCtx, id)
 		if dbErr != nil {
 			if errors.Is(dbErr, errcode.ErrUserNotFound) {
 				return false, nil
@@ -204,21 +204,27 @@ func (r *userRepository) GetBaseInfos(ctx context.Context, userIDs []int64) ([]*
 			return nil, err
 		}
 
+		backfillList := make([]*models.UserInfo, 0, len(dbInfos))
 		for _, info := range dbInfos {
-			temp := info
-			infos[info.ID] = temp
+			if info == nil {
+				continue
+			}
+			infos[info.ID] = info
+			backfillList = append(backfillList, info)
 		}
 
-		err = r.pool.Submit(func() {
-			backfillCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
+		if len(backfillList) > 0 {
+			err = r.pool.Submit(func() {
+				backfillCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				_ = r.userCache.AddLists(backfillCtx, backfillList)
+			})
 
-			_ = r.userCache.AddLists(backfillCtx, dbInfos)
-		})
-
-		if err != nil {
-			slog.Warn("一括バックフィルがスキップされました", "count", len(missedIDs))
+			if err != nil {
+				slog.Warn("一括バックフィルがスキップされました", "count", len(missedIDs))
+			}
 		}
+		
 	}
 
 	finalResults := make([]*dto.UserSlimRecord, 0, len(userIDs))
