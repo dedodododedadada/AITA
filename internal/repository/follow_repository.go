@@ -111,8 +111,8 @@ func (r *followRepository) CheckRelation(ctx context.Context, followerID, follow
 
 	sfKey := fmt.Sprintf("rel:%d:%d", low, high)
 
-	res, err := sf.GetDataWithSF(ctx, r.sfFollow, sfKey, func(c context.Context) (*models.RelationShip, error) {
-		return r.followStore.GetRelationship(context.Background(), followerID, followingID)
+	res, err := sf.GetDataWithSF(ctx, r.sfFollow, sfKey, func(innerCtx context.Context) (*models.RelationShip, error) {
+		return r.followStore.GetRelationship(innerCtx , followerID, followingID)
 	})
 
 	if err != nil {
