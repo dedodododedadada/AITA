@@ -92,8 +92,9 @@ func (r *tweetRepository) Update(ctx context.Context, newContent string, tweetID
 
 	_ = r.pool.Submit(func() {
 		time.Sleep(800 * time.Millisecond)
-
-		_ = r.tweetCache.Invalidate(context.Background(), tweetID)
+		delCtx, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
+		defer cancel() 
+		_ = r.tweetCache.Invalidate(delCtx, tweetID)
 	})
 	return dto.NewTweetRecord(tweet), nil
 }
@@ -172,23 +173,28 @@ func (r *tweetRepository) MultiGet(ctx context.Context, tweetIDs []int64) ([]*dt
 			return nil, err
 		}
 
+		backfillList := make([]*models.Tweet, 0, len(dbTweets))
 		for _, tweet := range dbTweets {
-			temp := tweet
-			tweetsMap[tweet.ID] = temp
+			if tweet == nil {
+				continue
+			}
+			tweetsMap[tweet.ID] = tweet
+			backfillList = append(backfillList, tweet)
 		}
 
-		err = r.pool.Submit(func() {
-			backfillCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
+		if len(backfillList) > 0 {
+			err = r.pool.Submit(func() {
+				backfillCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_ = r.tweetCache.MultiSetTweets(backfillCtx, dbTweets)
+			})
 
-			_ = r.tweetCache.MultiSetTweets(backfillCtx, dbTweets)
-		})
-
-		if err != nil {
-			slog.Warn("Tweetリストの一括バックフィル投入に失敗しました",
-				"missed_count", len(missedTIDs),
-				"err", err,
-			)
+			if err != nil {
+				slog.Warn("Tweetリストの一括バックフィル投入に失敗しました",
+					"missed_count", len(missedTIDs),
+					"err", err,
+				)
+			}
 		}
 	}
 
