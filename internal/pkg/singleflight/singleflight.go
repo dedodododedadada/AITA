@@ -13,26 +13,29 @@ var limitSem = make(chan struct{}, 100)
 func GetDataWithSF[T any](ctx context.Context, sf *singleflight.Group, key string, fn func(ctx context.Context)(T, error)) (T, error) {
 	var zero T
 
-	select {
-	case limitSem <- struct{}{}:
-		defer func() { <- limitSem}()
-	case <-ctx.Done():
-		return zero, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return zero, err
 	}
 
-	innerCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	ch := sf.DoChan(key, func() (interface{}, error) {
-		return fn(innerCtx)
+	ch := sf.DoChan(key, func() (any, error) {
+		execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5 * time.Second)
+		defer cancel()
+		select {
+		case limitSem <- struct{}{}:
+			defer func() {<- limitSem}()
+		case <- execCtx.Done():
+			return zero, execCtx.Err()
+		}
+		return fn(execCtx)
 	}) 
 
 	select {
 	case <- ctx.Done():
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return zero, fmt.Errorf("AITA SF timeout: %w", innerCtx.Err())
+		err := ctx.Err()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return zero, fmt.Errorf("AITA SF timeout: %w", err)
 		}
-		return  zero, ctx.Err()
+		return  zero, fmt.Errorf("AITA SF closed: %w", err)
 
 	case res, ok := <-ch:
 		if  !ok {
