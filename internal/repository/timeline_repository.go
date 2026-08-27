@@ -21,13 +21,11 @@ type TimeLineCache interface {
 
 type timeLineRepository struct {
 	timeLineCache TimeLineCache
-	pool       	  *ants.Pool
 }
 
 func NewTimeLineRepository(c TimeLineCache, p *ants.Pool) *timeLineRepository {
 	return &timeLineRepository{
 		timeLineCache: c,
-		pool: p,
 	}
 }
 
@@ -36,7 +34,7 @@ func (r *timeLineRepository) Push(ctx context.Context, tweetID int64, userIDs []
 	return  err
 }
 
-func (r *timeLineRepository) GetHomeTimeLine(ctx context.Context, userID int64, page, size int) ([]int64, error) {
+func (r *timeLineRepository) GetHomeTimeLine(ctx context.Context, userID int64, page, size int) ([]int64, error) {	
 	start := int64(page*size)
 	stop := start + int64(size) - 1
 
