@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_tweets_user_created_at;
