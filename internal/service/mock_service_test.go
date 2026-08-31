@@ -112,6 +112,11 @@ func(m *mockTweetRepository) Delete(ctx context.Context, tweetID int64) error {
 	return args.Error(0)
 }
 
+func (m *mockTweetRepository) GetTimelineByAuthorIDs(ctx context.Context, authorIDs []int64, page, size int) ([]*dto.TweetRecord, error) {
+	args := m.Called(ctx, authorIDs, page, size)
+	return testutils.SafeGetSlice[*dto.TweetRecord](args, 0), args.Error(1)
+}
+
 type mockMessageSender struct {
 	mock.Mock
 }
