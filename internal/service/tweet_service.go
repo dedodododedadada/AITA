@@ -16,6 +16,7 @@ type TweetRepository interface {
 	Delete(ctx context.Context, tweetID int64) error 
 	MultiGet(ctx context.Context, tweetIDs []int64) ([]*dto.TweetRecord, error)
 	GetTweetsByAuthor(ctx context.Context, userID int64, page, size int) ([]int64, error)
+	GetTimelineByAuthorIDs(ctx context.Context, authorIDs []int64, page, size int) ([]*dto.TweetRecord, error) 
 }
 
 type MessageSender interface {
@@ -169,7 +170,7 @@ func (s *tweetService) GetTweets(ctx context.Context, tweetIDs []int64) ([]*dto.
 
     tweets, err := s.tweetRepository.MultiGet(ctx, tweetIDs)
     if err != nil {
-        return nil, fmt.Errorf("TimeLineService.GetTweets: ツイートリストの一括取得に失敗しました: %w", err)
+        return nil, fmt.Errorf("TweetService.GetTweets: ツイートリストの一括取得に失敗しました: %w", err)
     }
 
     return tweets, nil
@@ -189,7 +190,7 @@ func (s *tweetService) GetMyTweets(ctx context.Context, userID int64, page, size
 
     ids, err := s.tweetRepository.GetTweetsByAuthor(ctx, userID, page, size)
     if err != nil {
-        return nil, fmt.Errorf("TimeLineService.GetMyTweets: 投稿一覧の ID 取得に失敗しました (user_id: %d): %w", userID, err)
+        return nil, fmt.Errorf("TweetService.GetMyTweets: 投稿一覧の ID 取得に失敗しました (user_id: %d): %w", userID, err)
     }
 
     if len(ids) == 0 {
@@ -198,9 +199,29 @@ func (s *tweetService) GetMyTweets(ctx context.Context, userID int64, page, size
 
     tweets, err := s.tweetRepository.MultiGet(ctx, ids)
     if err != nil {
-        return nil, fmt.Errorf("TimeLineService.GetMyTweets: 投稿内容のバルク変換に失敗しました (user_id: %d, count: %d): %w", 
+        return nil, fmt.Errorf("TweetService.GetMyTweets: 投稿内容のバルク変換に失敗しました (user_id: %d, count: %d): %w", 
             userID, len(ids), err)
     }
 
     return tweets, nil
+}
+
+func (s *tweetService) GetRecentTweets(ctx context.Context, authorIDs []int64, page, size int) ([]*dto.TweetRecord, error) {
+	if len(authorIDs) == 0  {
+		return []*dto.TweetRecord{}, nil
+	}
+
+	if page < 0 {
+		page = 0
+	}
+
+	if size <= 0 || size > 100 {
+		size = 20
+	}
+
+	tweets, err := s.tweetRepository.GetTimelineByAuthorIDs(ctx, authorIDs, page, size)
+	if err != nil {
+		return nil, fmt.Errorf("TimeLineService.GetTimeLine: タイムラインの取得に失敗しました (count: %d): %w", len(authorIDs), err)
+	}
+	return tweets, nil 
 }
