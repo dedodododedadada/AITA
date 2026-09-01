@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/panjf2000/ants/v2"
@@ -20,22 +21,29 @@ type TimeLineRepository interface {
 	Backfill(ctx context.Context, userID int64, tweets []*dto.TweetRecord) error
 }
 
-type TweetProvider interface{
+type TweetProvider interface  {
 	GetTweets(ctx context.Context, tweetIDs []int64) ([]*dto.TweetRecord, error)
 	GetMyTweets(ctx context.Context, userID int64, page, size int) ([]*dto.TweetRecord, error)
+	GetRecentTweets(ctx context.Context, authorIDs []int64, page, size int) ([]*dto.TweetRecord, error)
+}
+
+type FollowProvider interface {
+	GetFollowingIDs(ctx context.Context, userID int64) ([]int64, error)
 }
 
 type timeLineService struct {
 	timeLineRepository TimeLineRepository
 	tweetProvider      TweetProvider
+	followProvider     FollowProvider
 	sf                 *singleflight.Group
 	pool               *ants.Pool
 } 
 
-func NewTimeLineService(r TimeLineRepository, t TweetProvider, p *ants.Pool) *timeLineService {
+func NewTimeLineService(r TimeLineRepository, t TweetProvider, f FollowProvider, p *ants.Pool) *timeLineService {
 	return &timeLineService{
 		timeLineRepository: r,
 		tweetProvider: t,
+		followProvider: f,
 		sf: &singleflight.Group{},
 		pool: p,
 	}
@@ -110,26 +118,40 @@ func (s *timeLineService) GetHomeTimeLine(ctx context.Context, userID int64, pag
 			bgCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 
-			myTweets, err := s.tweetProvider.GetMyTweets(bgCtx, userID, page, size - len(ids))
+			followingIDs, err := s.followProvider.GetFollowingIDs(bgCtx, userID)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("TimeLineService.Rebuild: フォローリストの取得に失敗: %w", err)
 			}
 
-			if len(myTweets) == 0 {
+			targetAuthorIDs := append(followingIDs, userID)
+
+			rebuildLimit := size - len(ids)
+
+			if rebuildLimit <= 0 {
+				rebuildLimit = size
+			}
+
+			rebuildTweets, err := s.tweetProvider.GetRecentTweets(bgCtx, targetAuthorIDs, 0, rebuildLimit)
+
+			if err != nil {
+				return nil, fmt.Errorf("TimeLineService.Rebuild: ツイートの取得に失敗: %w", err)
+			}
+
+			if len(rebuildTweets) == 0 {
 				return []*dto.TweetRecord{}, nil
-			} 
+			}
 
 			asyncErr := s.pool.Submit(func() {
 				innerCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cancel()
 
-				_ = s.timeLineRepository.Backfill(innerCtx, userID, myTweets)
+				_ = s.timeLineRepository.Backfill(innerCtx, userID, rebuildTweets)
 			})
 			if asyncErr != nil {
 				slog.Warn("TimeLineService.Backfill: 非同期タスクの投入に失敗", "user_id", userID, "err", asyncErr)
 			}
 
-			return myTweets, nil
+			return rebuildTweets, nil
 		})
 
 		if sfErr != nil {
@@ -143,7 +165,21 @@ func (s *timeLineService) GetHomeTimeLine(ctx context.Context, userID int64, pag
 		return nil, err
 	}
 
-	finalResults := append(records, additionalTweets...)
+	seen := make(map[int64]struct{}, len(records) + len(additionalTweets))
+	finalResults := make([]*dto.TweetRecord, 0, len(records) + len(additionalTweets))
+
+	for _, t := range append(records, additionalTweets...) {
+		if t != nil {
+			if _, exists := seen[t.ID]; !exists {
+				seen[t.ID] = struct{}{}
+				finalResults = append(finalResults, t)
+			}
+		}
+	}
+
+	sort.Slice(finalResults, func(i, j int) bool {
+		return finalResults[i].CreatedAt.After(finalResults[j].CreatedAt)
+	})
 
 	return finalResults, nil
 }
