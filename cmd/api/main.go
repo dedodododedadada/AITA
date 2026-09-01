@@ -109,14 +109,15 @@ func main() {
 	sessionService := service.NewSessionService(serviceRepository, userService, tokenmanager)
 	tweetService := service.NewTweetService(tweetRepository, fanoutProducer)
 	followService := service.NewFollowService(followRepository, userService)
-	timeLineService := service.NewTimeLineService(timeLineRepository, tweetService, backfillPool)
+	timeLineService := service.NewTimeLineService(timeLineRepository, tweetService, followService, backfillPool)
 	fanoutWorker := worker.NewFanoutWorker(tweetMQ, followService, timeLineService, workerPool)
 
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
 	followHandler := api.NewFollowHandler(followService)
+	timeLineHandler := api.NewTimeLineHandler(timeLineService)
 
-	router := api.SetupRouter(userHandler, tweetHandler, followHandler, sessionService)
+	router := api.SetupRouter(userHandler, tweetHandler, followHandler, sessionService, timeLineHandler)
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
     defer workerCancel()

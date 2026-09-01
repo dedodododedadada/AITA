@@ -40,16 +40,19 @@ func TestUserLifeCycleIntegration(t *testing.T) {
 	sesseionRepository := repository.NewSessionRepository(testSessionStore)
 	followRepository := repository.NewFollowRepository(testFollowStore, testFollowCache, testPool)
 	tweetRepository := repository.NewTweetRepository(testTweetStore, testTweetCache, testPool)
+	timeLineRepository := repository.NewTimeLineRepository(testTimeLineCache, testPool)
 	userService := service.NewUserService(userRepository, testHasher)
 	sessionService := service.NewSessionService(sesseionRepository, userService, testTokemanager)
 	followService := service.NewFollowService(followRepository, userService)
 	tweetService := service.NewTweetService(tweetRepository, fanoutProduer)
+	timeLineService := service.NewTimeLineService(timeLineRepository, tweetService, followService, testPool)
 	userHandler := api.NewUserHandler(userService, sessionService)
 	tweetHandler := api.NewTweetHandler(tweetService)
 	followHandler := api.NewFollowHandler(followService)
+	timeLineHandler := api.NewTimeLineHandler(timeLineService)
 
 	gin.SetMode(gin.TestMode)
-	r := api.SetupRouter(userHandler, tweetHandler, followHandler,sessionService)
+	r := api.SetupRouter(userHandler, tweetHandler, followHandler,sessionService, timeLineHandler)
 	signupPayload := app.SignupRequest{
 		Username: "frontend_dev",
 		Email:    "dev@aita.com",

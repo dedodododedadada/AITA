@@ -36,7 +36,7 @@ func (c *redisTimeLineCache) PushBatch(ctx context.Context, tweetID int64, userI
 		tlKey := c.timelineKey(id)
 		pipe.ZAdd(ctx, tlKey, redis.Z{Score: score, Member: tweetID})
 		pipe.ZRemRangeByRank(ctx, tlKey, 0, -1001)
-		ttl := utils.GetRandomExpiration(72, 3)
+		ttl := utils.GetRandomExpiration(72 * time.Hour, 3 * time.Hour)
 		pipe.Expire(ctx, tlKey, ttl)
 	}
 
@@ -87,7 +87,7 @@ func(c *redisTimeLineCache) RecallTweet(ctx context.Context, tweetID int64, user
 }
 
 func (c *redisTimeLineCache) FindRange(ctx context.Context, userID int64, start, stop int64) ([]int64, error) {
-	if  start >= stop {
+	if  start < 0 || (stop >= 0 && start > stop) {
 		return []int64{}, nil
 	}
 

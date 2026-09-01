@@ -21,6 +21,7 @@ type TweetStore interface {
 	DeleteTweet(ctx context.Context, tweetID int64) error
 	GetTweetsByTweetIDs(ctx context.Context, tweetIDS []int64) ([]*models.Tweet, error)
 	GetTweetIDsByAuthor(ctx context.Context, authorID int64, page, size int) ([]int64, error) 
+	GetTimelineByAuthorIDs(ctx context.Context, authorIDs []int64, page, size int) ([]*models.Tweet, error)
 }
 
 type TweetCache interface {
@@ -92,8 +93,9 @@ func (r *tweetRepository) Update(ctx context.Context, newContent string, tweetID
 
 	_ = r.pool.Submit(func() {
 		time.Sleep(800 * time.Millisecond)
-
-		_ = r.tweetCache.Invalidate(context.Background(), tweetID)
+		delCtx, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
+		defer cancel() 
+		_ = r.tweetCache.Invalidate(delCtx, tweetID)
 	})
 	return dto.NewTweetRecord(tweet), nil
 }
@@ -172,23 +174,28 @@ func (r *tweetRepository) MultiGet(ctx context.Context, tweetIDs []int64) ([]*dt
 			return nil, err
 		}
 
+		backfillList := make([]*models.Tweet, 0, len(dbTweets))
 		for _, tweet := range dbTweets {
-			temp := tweet
-			tweetsMap[tweet.ID] = temp
+			if tweet == nil {
+				continue
+			}
+			tweetsMap[tweet.ID] = tweet
+			backfillList = append(backfillList, tweet)
 		}
 
-		err = r.pool.Submit(func() {
-			backfillCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
+		if len(backfillList) > 0 {
+			err = r.pool.Submit(func() {
+				backfillCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_ = r.tweetCache.MultiSetTweets(backfillCtx, backfillList)
+			})
 
-			_ = r.tweetCache.MultiSetTweets(backfillCtx, dbTweets)
-		})
-
-		if err != nil {
-			slog.Warn("Tweetリストの一括バックフィル投入に失敗しました",
-				"missed_count", len(missedTIDs),
-				"err", err,
-			)
+			if err != nil {
+				slog.Warn("Tweetリストの一括バックフィル投入に失敗しました",
+					"missed_count", len(missedTIDs),
+					"err", err,
+				)
+			}
 		}
 	}
 
@@ -220,3 +227,44 @@ func (r *tweetRepository) GetTweetsByAuthor(ctx context.Context, userID int64, p
 	return ids, nil
 }
 
+func (r *tweetRepository) GetTimelineByAuthorIDs(ctx context.Context, authorIDs []int64, page, size int) ([]*dto.TweetRecord, error) {
+	if	len(authorIDs) == 0 || page < 0 || size <= 0 {
+		return []*dto.TweetRecord{}, nil
+	}
+
+	dbTweets, err := r.tweetStore.GetTimelineByAuthorIDs(ctx, authorIDs, page, size)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(dbTweets) == 0 {
+		return []*dto.TweetRecord{}, nil
+	}
+
+	backfilledList := make([]*models.Tweet, 0, len(dbTweets))
+	records := make([]*dto.TweetRecord, 0, len(dbTweets))
+
+	for _, t := range dbTweets {
+		if t != nil {
+			backfilledList = append(backfilledList, t)
+			records = append(records, dto.NewTweetRecord(t))
+		}
+	}
+
+	if len(backfilledList) > 0 {
+		err = r.pool.Submit(func() {
+			backfillCtx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
+			defer cancel()
+
+			_ = r.tweetCache.MultiSetTweets(backfillCtx, backfilledList)
+		})
+
+		if err != nil {
+			slog.Warn("Tweetリストの一括バックフィル投入に失敗しました",
+					"err", err,
+				)
+		}
+	}
+
+	return records, nil
+}

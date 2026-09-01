@@ -157,7 +157,7 @@ func (s *postgresTweetStore) GetTweetsByTweetIDs(ctx context.Context, tweetIDs [
 
 func (s *postgresTweetStore) GetTweetIDsByAuthor(ctx context.Context, authorID int64, page, size int) ([]int64, error) {
 	offset := page * size
-	query := `SELCT id FROM tweets WHERE user_id = ? ORERDED BY id DESC LIMIT $2 OFFSET $3`
+	query := `SELECT id FROM tweets WHERE user_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3`
 	rows, err := s.BaseStore.conn(ctx).QueryContext(ctx, query, authorID, size, offset)
 	if err != nil {
 		return nil, fmt.Errorf("%dのツイートの取得に失敗しました: %w", authorID, err)
@@ -177,4 +177,31 @@ func (s *postgresTweetStore) GetTweetIDsByAuthor(ctx context.Context, authorID i
     }
 
     return ids, nil
+}
+
+func (s *postgresTweetStore) GetTimelineByAuthorIDs(ctx context.Context, authorIDs []int64, page, size int) ([]*models.Tweet, error) {
+	if len(authorIDs) == 0 {
+		return []*models.Tweet{}, nil
+	}
+	
+	offset := page * size
+	query := `SELECT id,
+		user_id, 
+		content, 
+		image_url, 
+		created_at, 
+		updated_at, 
+		is_edited 
+		FROM tweets
+		WHERE user_id = ANY($1)
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	var tweets []*models.Tweet
+	err := s.BaseStore.conn(ctx).SelectContext(ctx, &tweets, query, pq.Array(authorIDs), size, offset)
+	if err != nil {
+		return nil, fmt.Errorf("Timeline DB 取得に失敗しました(author count: %d): %w", len(authorIDs), err)
+	}
+
+	return tweets, nil
 }

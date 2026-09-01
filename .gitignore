@@ -15,4 +15,4 @@ Thumbs.db
 go
 go.sum.bak  
    
-repomix-output.xml 
+*.xml 

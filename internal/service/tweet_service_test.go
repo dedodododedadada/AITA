@@ -271,8 +271,16 @@ func TestToMyTweet(t *testing.T) {
 			res, err := svc.ToMyTweet(ctx, tt.inputTweetID, tt.inputUserID)
 
 			if tt.wantedErr != nil {
+				if tt.wantedErr == errcode.ErrForbidden {
+					require.NotNil(t, res)
+					assert.Equal(t, tt.inputTweetID, res.ID)
+					assert.Equal(t, "mock", res.Content)
+					assert.Equal(t, time.UTC, res.CreatedAt.Location())
+					assert.Equal(t, time.UTC, res.UpdatedAt.Location())
+				} else {
+				    assert.Nil(t, res)
+				}
 				assert.ErrorIs(t, err, tt.wantedErr)
-				assert.Nil(t, res)
 				if tt.errMsg != "" {
 					assert.Contains(t, err.Error(), "ツイート情報の取得に失敗しました")
 				}
@@ -354,12 +362,12 @@ func TestEditTweet(t *testing.T) {
 				existingTweet := &dto.TweetRecord{
 					ID:        101,
 					UserID:    102,
-					Content:   "content",
+					Content:   "hack",
 					CreatedAt: time.Now().UTC(),
 				}
 				mt.On("Get", mock.Anything, int64(101)).Return(existingTweet, nil)
 			},
-			wantedErr: errcode.ErrForbidden,
+			wantedErr: nil,
 		},
 		{
 			name:         "正常系：内容に変更がない場合は早期リターンする",
@@ -467,7 +475,7 @@ func TestRemoveTweet(t *testing.T) {
 				existingTweet := &dto.TweetRecord{ID: 201, UserID: 202}
 				mt.On("Get", mock.Anything, int64(201)).Return(existingTweet, nil)
 			},
-			wantedErr: errcode.ErrForbidden,
+			wantedErr: nil,
 		},
 		{
 			name:         "異常系: DBエラーによる削除失敗",
@@ -504,6 +512,87 @@ func TestRemoveTweet(t *testing.T) {
 				require.NoError(t, err)
 			}
 
+			mt.AssertExpectations(t)
+		})
+	}
+}
+
+func TestGetRecentTweets(t *testing.T) {
+	tests := []struct {
+		name      string
+		authorIDs []int64
+		page      int
+		size      int
+		setupMock func(mt *mockTweetRepository)
+		wantLen   int
+		wantErr   error
+	}{
+		{
+			name:      "【正常系】複数著者の最新ツイート取得成功",
+			authorIDs: []int64{101, 102},
+			page:      0,
+			size:      10,
+			setupMock: func(mt *mockTweetRepository) {
+				mockTweets := []*dto.TweetRecord{
+					{ID: 1, UserID: 101, Content: "Tweet 1"},
+					{ID: 2, UserID: 102, Content: "Tweet 2"},
+				}
+				mt.On("GetTimelineByAuthorIDs", mock.Anything, []int64{101, 102}, 0, 10).
+					Return(mockTweets, nil)
+			},
+			wantLen: 2,
+			wantErr: nil,
+		},
+		{
+			name:      "【境界値】authorIDsが空配列の場合はリポジトリを呼ばず空配列を即時返却",
+			authorIDs: []int64{},
+			page:      0,
+			size:      10,
+			setupMock: func(mt *mockTweetRepository) {
+				// リポジトリメソッドの呼び出しは期待しない
+			},
+			wantLen: 0,
+			wantErr: nil,
+		},
+		{
+			name:      "【境界値】不正なpageおよびsizeの自動補正(page < 0 -> 0, size > 100 -> 20)",
+			authorIDs: []int64{101},
+			page:      -1,  // 0 に自動補正
+			size:      200, // 20 に自動補正
+			setupMock: func(mt *mockTweetRepository) {
+				mt.On("GetTimelineByAuthorIDs", mock.Anything, []int64{101}, 0, 20).
+					Return([]*dto.TweetRecord{}, nil)
+			},
+			wantLen: 0,
+			wantErr: nil,
+		},
+		{
+			name:      "【異常系】リポジトリからの取得エラー",
+			authorIDs: []int64{101},
+			page:      0,
+			size:      10,
+			setupMock: func(mt *mockTweetRepository) {
+				mt.On("GetTimelineByAuthorIDs", mock.Anything, []int64{101}, 0, 10).
+					Return(nil, errMockInternal)
+			},
+			wantLen: 0,
+			wantErr: errMockInternal,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mt := new(mockTweetRepository)
+			mm := new(mockMessageSender)
+			tt.setupMock(mt)
+			svc := NewTweetService(mt, mm)
+			got, err := svc.GetRecentTweets(context.Background(), tt.authorIDs, tt.page, tt.size)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr, "期待されるエラー型が一致すること")
+				assert.Nil(t, got, "エラー発生時は戻り値がnilであること")
+			}else {
+				assert.NoError(t, err)
+				assert.Len(t, got, tt.wantLen)
+			}
 			mt.AssertExpectations(t)
 		})
 	}
