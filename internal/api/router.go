@@ -5,10 +5,11 @@ import (
 )
 
 func SetupRouter(
-	userHandler *UserHandler, 
-	tweetHandler *TweetHandler, 
-	followHandler *FollowHandler,
-	sessionService AuthSessionService ,
+	userHandler 	*UserHandler, 
+	tweetHandler 	*TweetHandler, 
+	followHandler 	*FollowHandler,
+	sessionService 	AuthSessionService ,
+	timeLineHandler *TimeLineHandler,
 ) *gin.Engine {
 	router := gin.Default()
 	router.GET("/health", func(c *gin.Context) {
@@ -45,6 +46,7 @@ func SetupRouter(
     			users.GET("/followers", followHandler.GetFollowers)
     			users.GET("/followings", followHandler.GetFollowings)
 			}
+			protected.GET("/timeline", timeLineHandler.GetHomeTimeLine)
 		} 
 	}
 	return router
