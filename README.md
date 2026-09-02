@@ -8,7 +8,7 @@ AITAは、Go (Golang) で構築された、高並列・スケーラブルなSNS�
 
 フェーズ 1 (完了): ユーザー認証システム、データベース基盤の構築。ユーザー作成と認証のユニットテストと結合テスト作成
 
-フェーズ 2 (進行中): Redisによる非同期処理、ツイート投稿機能の実装。
+フェーズ 2 (完了): Redisによる非同期処理、ツイート投稿機能の実装。
 
 フェーズ 3 (予定): Elasticsearchによる検索エンジンの統合。
 
@@ -18,9 +18,9 @@ AITAは、Go (Golang) で構築された、高並列・スケーラブルなSNS�
 
 Webフレームワーク: Gin Gonic
 
-データベース: PostgreSQL (sqlxによる効率的なマッピング)
+データベース: PostgreSQL 
 
-キャッシュ / メッセージキュー: Redis (Session管理、Redis Streams予定)
+キャッシュ / メッセージキュー: Redis
 
 検索エンジン: Elasticsearch (導入予定)
 
@@ -30,6 +30,37 @@ Webフレームワーク: Gin Gonic
 
 主な機能
 
+## 🏛 システムアーキテクチャ (Architecture)
+```mermaid
+graph TD
+    Client[📱 Client / Web Application] -->|HTTP REST / JSON| Gin[🚀 Gin Gonic API Router]
+    
+    subgraph MiddlewareLayer [ミドルウェア層]
+        Gin --> AuthMid[🔐 Session Auth Middleware]
+        Gin --> LogMid[📝 Structured Logging slog]
+    end
+    subgraph ServiceLayer [ビジネスロジック層 Clean Architecture]
+        AuthMid --> UserSvc[User / Session Service]
+        AuthMid --> TweetSvc[Tweet Service]
+        AuthMid --> FollowSvc[Follow Service]
+        AuthMid --> TLSvc[TimeLine Service]
+    end
+    subgraph StorageLayer [ストレージ & キャッシュ層]
+        TweetSvc -->|Cache-Aside| TweetRepo[Tweet Repository]
+        TweetRepo -->|RDB| PG[(🐘 PostgreSQL)]
+        TweetRepo -->|Entity Cache| RCache[(⚡ Redis Tweet Cache)]
+        
+        TLSvc -->|ZSet Feed| RTimeline[(⚡ Redis Timeline ZSet)]
+        FollowSvc -->|Relation Cache| RFollow[(⚡ Redis Follow Cache)]
+    end
+    subgraph AsyncPipeline [非同期処理パイプライン]
+        TweetSvc -->|Enqueue Event| Stream[📨 Redis Streams MQ]
+        Stream -->|Dequeue Task| Worker[⚙️ Fanout Worker]
+        Worker -->|Routine Pool| Ants[🐜 Ants Goroutine Pool]
+        Ants -->|Write Fanout Push| RTimeline
+    end
+```
+
 実装済み (Implemented)
 
 セッション認証システム:
@@ -38,10 +69,9 @@ Webフレームワーク: Gin Gonic
 クリーンアーキテクチャ:
 cmd/, internal/ をベースとしたディレクトリ構成を採用。レイヤードアーキテクチャにより疎結合を確保。
 
-開発予定 (Upcoming)
+高並列アーキテクチャ (Write Fan-out): Redis Streamsを利用した非同期タスク処理により、タイムライン配信を高速化。
 
-高並列アーキテクチャ (Write Fan-out):
-Redis Streamsを利用した非同期タスク処理により、タイムライン配信を高速化。
+開発予定 (Upcoming)
 
 高度な全文検索:
 Elasticsearchを統合し、投稿内容の高速検索を提供。
@@ -80,16 +110,6 @@ Elasticsearchを統合し、投稿内容の高速検索を提供。
 
 
 今後のロードマップ
-
-[x] ユーザー登録・ログインAPIの実装。
-
-[x] データベースマイグレーションツールの導入。
-
-[x] DB層のトークン機能とユーザー機能のユニットテスト
-
-[x] ツイート投稿機能の実装。
-
-[ ] Redisによるタイムライン（Feed）のキャッシュ最適化。
 
 [ ] Elasticsearchを用いた投稿内容の全文検索。
 
