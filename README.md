@@ -1,9 +1,9 @@
 # AITA - 高性能ソーシャルメディア・バックエンドプラットフォーム
-AITAは、Go (Golang) で構築された、高並列・スケーラブルなSNSバックエンドプラットフォームです。大規模なユーザー利用シーンを想定し、高速なセッション認証、リアルタイムな情報配信（Push-Pull混合タイムライン）、Redis Streamsによる非同期写拡散パイプラインの実装に焦点を当てています。
+AITAは、Go (Golang) で構築された高並行・スケーラブルなSNSバックエンドプラットフォームです。大規模なトラフィックを想定し、高速なセッション認証、リアルタイムなタイムライン配信（Push/Pullハイブリッド構成）、Redis Streamsによる非同期ファンアウト（Write Fan-out）パイプラインの実装に焦点を当てています。
 ---
 ## 🚀 開発状況 (Development Status)
 - **フェーズ 1 (完了)**: ユーザー認証システム、データベース基盤（PostgreSQL）、ユニットテストおよび結合テストの構築。
-- **フェーズ 2 (完了)**: Redis Streams による非同期タスク処理、ツイート投稿、タイムライン（Feed）配信・キャッシュ最適化・自癒リビルドの実装。
+- **フェーズ 2 (完了)**: Redis Streams による非同期タスク処理、ツイート投稿、タイムライン（Feed）配信・キャッシュ最適化・オンデマンド自己修復リビルドの実装。
 - **フェーズ 3 (進行中/予定)**: Elasticsearch による投稿内容の全文検索エンジンの統合、画像アップロード機能。
 ---
 ## 🛠 技術スタック (Tech Stack)
@@ -32,7 +32,7 @@ graph TD
         TweetHandler --> TweetService[TweetService]
         FollowHandler --> FollowService[FollowService]
         TimeLineHandler --> TimeLineService[TimeLineService]
-        TimeLineService -.->|フォロー一覧取得| FollowService
+        TimeLineService -.->|フォロー中ID一覧取得| FollowService
         TimeLineService -.->|最新ツイート取得| TweetService
     end
     subgraph RepositoryLayer [3. リポジトリ層 internal/repository]
@@ -53,11 +53,11 @@ graph TD
         FollowRepo --> R_Follow[(⚡ Redis Follow Cache)]
         TimeLineRepo --> R_Timeline[(⚡ Redis Timeline ZSet)]
     end
-    subgraph AsyncPipeline [5. 非同期写拡散パイプライン internal/worker & producer]
+    subgraph AsyncPipeline [5. 非同期ファンアウトパイプライン internal/worker & producer]
         TweetService -->|XADD| Stream[📨 Redis Stream MQ aita:tweet:stream]
         Stream -->|XREADGROUP| Worker[⚙️ Fanout Worker]
         Worker -->|Routine Pool| WorkerPool[🐜 Ants Worker Pool]
-        WorkerPool -->|写拡散 Push| TimeLineService
+        WorkerPool -->|タイムラインPush配信| TimeLineService
     end
 ```
 ---
@@ -88,12 +88,12 @@ sequenceDiagram
     end
     Worker->>MQ: 処理完了ACK (XACK)
     Follower->>API: GET /api/v1/timeline
-    API->>RedisTL: ZRANGE REV で最新の推文ID一覧を取得
-    API->>RedisTW: MultiGet で推文詳細を一括取得 (Cache Hit)
-    API-->>Follower: 200 OK (高速なタイムライン表示)
+    API->>RedisTL: ZRANGE REV で最新ツイートID一覧を取得
+    API->>RedisTW: MultiGet でツイート詳細を一括取得 (Cache Hit)
+    API-->>Follower: 200 OK (タイムラインを高速返却)
 ```
 ---
-### 2. タイムラインのキャッシュミスと自癒リビルド (Pull Fallback)
+### 2. タイムラインのキャッシュミスと自己修復リビルド (Pull Fallback)
 ```mermaid
 sequenceDiagram
     autonumber
@@ -107,38 +107,38 @@ sequenceDiagram
     participant DB as PostgreSQL
     User->>TLSvc: GET /api/v1/timeline
     TLSvc->>R_TL: タイムラインZSetからID一覧を取得
-    alt キャッシュヒット (通常時: 充分な推文IDがある)
+    alt キャッシュヒット (通常時: 十分なデータが存在)
         R_TL-->>TLSvc: ツイートID一覧を返却
-    else キャッシュミス / 冷ユーザー (冷起動時: データ不足)
-        TLSvc->>SF: SingleFlight で重複リビルドを集約
+    else キャッシュミス / コールドスタート (非アクティブユーザーや失効時)
+        TLSvc->>SF: SingleFlight で重複リビルド処理を集約
         SF->>FollowSvc: フォロー中ユーザーID一覧を取得
-        SF->>TweetSvc: 複数作者の最新ツイートをDBから取得
+        SF->>TweetSvc: 該当ユーザーの最新ツイートをDBから取得
         TweetSvc->>DB: WHERE user_id = ANY(...) ORDER BY created_at DESC
-        DB-->>TweetSvc: 最新ツイートレコード返却
+        DB-->>TweetSvc: 最新ツイートレコードを返却
         TweetSvc--)R_TW: 取得したツイート詳細を非同期キャッシュ (MultiSet)
         SF--)R_TL: バックグラウンドでZSetを非同期バックフィル (Backfill)
         SF-->>TLSvc: 追加ツイート一覧
     end
-    TLSvc->>TweetSvc: 命中したIDのツイート詳細を一括取得 (MultiGet)
-    TweetSvc->>R_TW: キャッシュから推文エンティティ取得
-    TweetSvc-->>TLSvc: 推文詳細一覧
-    Note over TLSvc: データの重複排除 (Map) と 時間降順ソート (Sort)
-    TLSvc-->>User: 200 OK (最新順のタイムライン表示)
+    TLSvc->>TweetSvc: 取得したIDのツイート詳細を一括取得 (MultiGet)
+    TweetSvc->>R_TW: キャッシュからツイート詳細を取得
+    TweetSvc-->>TLSvc: ツイート詳細一覧
+    Note over TLSvc: 重複排除 (Map) と 投稿日時の降順ソート (Sort)
+    TLSvc-->>User: 200 OK (最新順のタイムラインを返却)
 ```
 ---
 ## ✨ 主な機能と技術的特徴 (Key Features)
 ### 実装済み (Implemented)
 * **クリーンアーキテクチャ (Clean Architecture)**:
-  `api/`, `service/`, `repository/`, `db/cache/` を明確に分離したレイヤード設計。疎結合と高いテスト容易性を確保。
-* **高並列写拡散 (Write Fan-out Architecture)**:
-  Redis Streams (MQ) と Consumer Group を採用。投稿時のAPI遅延を排除し、Ants Goroutine Pool による並列処理でフォロワーの Redis ZSet へ高速配信。
-* **推拉結合（Push-Pull Hybrid）タイムライン**:
-  通常時は Redis ZSet から $O(\log N)$ で読み込むプッシュ型。冷ユーザーやキャッシュ蒸発時は SingleFlight を用いて安全に DB から動的リビルドし、キャッシュを自癒（Backfill）するプル型フォールバックを完備。
-* **キャッシュスタンピード / 雪崩対策**:
-  * **SingleFlight**: 同一キーへの同時アクセスを1回に集約し、DBへの負荷集中を防止。
-  * **Jitter Expiration**: キャッシュ有効期限にランダムな揺らぎ（Jitter）を持たせ、一斉失効を防止。
+  `api/`, `service/`, `repository/`, `db/cache/` を明確に分離したレイヤード設計。疎結合と高いテスタビリティを確保。
+* **高並列ファンアウト設計 (Write Fan-out Architecture)**:
+  Redis Streams (MQ) と Consumer Group を採用。投稿時のAPIレスポンス遅延を極小化し、Ants Goroutine Pool による並列処理でフォロワーの Redis ZSet へ高速にプッシュ配信。
+* **Push/Pull ハイブリッド型タイムライン**:
+  通常時は Redis ZSet から $O(\log N)$ で取得するプッシュ型配信。非アクティブユーザーのコールドスタート時やキャッシュ失効時は、SingleFlight を用いてDB負荷を抑えつつオンデマンドで再構築し、キャッシュを自動復元（Backfill）するプル型フォールバックを完備。
+* **キャッシュスタンピード・キャッシュ雪崩対策**:
+  * **SingleFlight**: 同一リクエストへの同時アクセスを1回に集約し、DBへの負荷集中（キャッシュスタンピード）を防止。
+  * **Jitter Expiration**: キャッシュ有効期限（TTL）にランダムな揺らぎ（Jitter）を持たせ、一斉失効によるキャッシュ雪崩を防止。
 * **ID・コンテンツ分離設計 (Two-Step Query)**:
-  Timeline ZSet には ID と時間スコアのみを保持。本体データは Redis の `tweet:<id>` から `MultiGet` でキャッシュヒット率を最大化。
+  Timeline ZSet には ID とタイムスタンプスコアのみを保持。本文データは Redis の `tweet:<id>` から `MultiGet` で取得することでキャッシュヒット率を最大化。
 * **セッション認証システム**:
   Bcrypt ハッシュ化パスワード + 独自トークン管理（有効期限の自動非同期ローテーション機能付き）。
 ---
@@ -176,5 +176,4 @@ sequenceDiagram
 ## 🗺 今後のロードマップ (Roadmap)
 - [ ] **Elasticsearch 連携**: 投稿内容の日本語/多言語全文検索エンジンの統合。
 - [ ] **メディアアップロード**: クラウドオブジェクトストレージ（GCS / S3 / MinIO）による画像アップロード対応。
-- [ ] **推拉最適化（大V対策）**: 超人気アカウント向けのセレブリティ・プル配信モードの実装。
-- [ ] **k6 負荷テスト**: 高同時実行環境における RPS / レイテンシベンチマークの計測。
+- [ ] **著名人アカウント向け配信最適化**: フォロワー数が極めて多いアカウント向けのプル型配信最適化（Celebrity Pull）。
